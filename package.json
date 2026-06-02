@@ -1,6 +1,6 @@
 {
   "name": "aurora-launcher",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "author": "Morbryn",
   "description": "Aurora Launcher - Modern custom Minecraft Launcher",
   "main": "dist-electron/electron/main.js",

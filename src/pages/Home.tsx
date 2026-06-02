@@ -106,7 +106,7 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
 
       <div className="page-header">
         <h1 className="page-title">Home</h1>
-        <p className="page-subtitle">Launch Minecraft and manage your game</p>
+        <p className="page-subtitle">Launch Minecraft and manage your game.</p>
       </div>
 
       {loading ? (
