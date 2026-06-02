@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const files = ['icon.png', 'icon.ico']
+const files = ['icon.png', 'icon.ico', 'icon-1024.png']
 const dests = ['dist-electron/electron', 'dist']
 
 for (const dest of dests) {

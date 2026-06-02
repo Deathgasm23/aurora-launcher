@@ -58,6 +58,7 @@ class SettingsService {
             theme: 'dark',
             accentColor: '#d97706',
             launchArgs: '',
+            versionMemory: {},
         };
     }
     load() {

@@ -70,6 +70,9 @@ function Accounts({ onAccountsChanged }: AccountsProps) {
       <div className="page-header">
         <h1 className="page-title">Accounts</h1>
         <p className="page-subtitle">Manage your Minecraft accounts</p>
+        <button className="btn btn-primary" onClick={() => setShowOfflineModal(true)} style={{ marginTop: 12 }}>
+          <UserPlus size={14} /> Add Account
+        </button>
       </div>
 
       {pageLoading ? (

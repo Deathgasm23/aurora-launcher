@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Trash2, Play, Globe, Wifi, WifiOff, Users, RefreshCw, Loader2, Signal, SignalHigh, SignalLow, Zap } from 'lucide-react'
-import type { ServerEntry, MinecraftAccount, ServerStatus } from '../../shared/types'
+import { Plus, Trash2, Globe, Wifi, WifiOff, Users, RefreshCw, Loader2, Signal, SignalHigh, SignalLow, Zap, Edit3 } from 'lucide-react'
+import type { ServerEntry, MinecraftAccount, ServerStatus, InstallProgress } from '../../shared/types'
 import Notification from '../components/common/Notification'
 import Modal from '../components/common/Modal'
 
 interface ServersPageProps {
   currentAccount: MinecraftAccount | null
-  onLaunch: (accountId: string, versionId: string, javaPath?: string) => Promise<{ success: boolean; error?: string }>
 }
 
-export default function ServersPage({ currentAccount, onLaunch }: ServersPageProps) {
+export default function ServersPage({ currentAccount }: ServersPageProps) {
   const [servers, setServers] = useState<ServerEntry[]>([])
+  const [accounts, setAccounts] = useState<MinecraftAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [notif, setNotif] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [showAdd, setShowAdd] = useState(false)
@@ -22,11 +22,20 @@ export default function ServersPage({ currentAccount, onLaunch }: ServersPagePro
   const [pinging, setPinging] = useState<Record<string, boolean>>({})
   const [addStatus, setAddStatus] = useState<ServerStatus | null>(null)
   const [addPinging, setAddPinging] = useState(false)
+  const [editServer, setEditServer] = useState<ServerEntry | null>(null)
+  const [editVersion, setEditVersion] = useState('')
+  const [pendingPlay, setPendingPlay] = useState<ServerEntry | null>(null)
+  const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null)
+  const [accountsLoading, setAccountsLoading] = useState(false)
 
   async function loadServers() {
     try {
-      const list = await window.electronAPI.servers.list()
+      const [list, accs] = await Promise.all([
+        window.electronAPI.servers.list(),
+        window.electronAPI.auth.getAccounts(),
+      ])
       setServers(list)
+      setAccounts(accs)
     } catch {}
     setLoading(false)
   }
@@ -47,13 +56,13 @@ export default function ServersPage({ currentAccount, onLaunch }: ServersPagePro
   }, [servers, pingServer])
 
   async function handleAdd() {
-    if (!newName.trim() || !newAddress.trim()) return
+    if (!newName.trim() || !newAddress.trim() || !newVersion.trim()) return
     const entry: ServerEntry = {
       id: Date.now().toString(),
       name: newName.trim(),
       address: newAddress.trim(),
       port: newPort,
-      version: newVersion.trim() || undefined,
+      version: newVersion.trim(),
     }
     const updated = [...servers, entry]
     await window.electronAPI.servers.save(updated)
@@ -73,21 +82,57 @@ export default function ServersPage({ currentAccount, onLaunch }: ServersPagePro
     setServers(updated)
   }
 
-  async function handleQuickPlay(server: ServerEntry) {
-    if (!currentAccount) {
+  async function handleQuickPlay(server: ServerEntry, accountId?: string) {
+    const accId = accountId || currentAccount?.id
+    if (!accId) {
       setNotif({ message: 'Select an account first', type: 'error' })
       return
     }
-    const versionId = server.version || (await window.electronAPI.settings.get()).lastVersion
+    const versionId = server.version
     if (!versionId) {
-      setNotif({ message: 'No version selected. Set a version for this server.', type: 'error' })
+      setNotif({ message: 'This server has no version set. Edit it and add a version.', type: 'error' })
       return
     }
+    const installed = await window.electronAPI.versions.getInstalledVersions()
+    if (!installed.includes(versionId)) {
+      window.electronAPI.versions.onInstallProgress((progress: InstallProgress) => {
+        setInstallProgress(progress)
+      })
+      const result = await window.electronAPI.versions.installVersion(versionId)
+      window.electronAPI.versions.removeInstallProgressListener()
+      setInstallProgress(null)
+      if (!result.success) {
+        setNotif({ message: result.error || `Failed to install ${versionId}`, type: 'error' })
+        return
+      }
+    }
     await window.electronAPI.launch.setLastVersion(versionId)
-    const result = await onLaunch(currentAccount.id, versionId)
+    const result = await window.electronAPI.launch.launchGameWithExtras(accId, versionId, {
+      serverAddress: server.address,
+      serverPort: server.port,
+    })
     if (!result.success) {
       setNotif({ message: result.error || 'Launch failed', type: 'error' })
     }
+  }
+
+  function handlePlayClick(server: ServerEntry) {
+    if (!currentAccount && accounts.length === 0) {
+      setNotif({ message: 'Add an account first', type: 'error' })
+      return
+    }
+    if (accounts.length > 1) {
+      setPendingPlay(server)
+      return
+    }
+    handleQuickPlay(server)
+  }
+
+  async function handlePlayAs(accountId: string) {
+    if (!pendingPlay) return
+    const server = pendingPlay
+    setPendingPlay(null)
+    await handleQuickPlay(server, accountId)
   }
 
   async function handlePingPreview() {
@@ -97,6 +142,15 @@ export default function ServersPage({ currentAccount, onLaunch }: ServersPagePro
     const status = await window.electronAPI.servers.ping(newAddress.trim(), newPort)
     setAddStatus(status)
     setAddPinging(false)
+  }
+
+  async function handleEdit() {
+    if (!editServer || !editVersion.trim()) return
+    const updated = servers.map(s => s.id === editServer.id ? { ...s, version: editVersion.trim() } : s)
+    await window.electronAPI.servers.save(updated)
+    setServers(updated)
+    setEditServer(null)
+    setNotif({ message: 'Server updated', type: 'success' })
   }
 
   const stripColorCodes = (text: string) => text.replace(/§[0-9a-fk-or]/g, '')
@@ -157,9 +211,12 @@ export default function ServersPage({ currentAccount, onLaunch }: ServersPagePro
                     <button className="btn btn-ghost btn-xs" onClick={() => pingServer(s.id, s.address, s.port)} title="Refresh status" disabled={pingingNow}>
                       <RefreshCw size={12} className={pingingNow ? 'spinner' : ''} />
                     </button>
-                    <button className="btn btn-primary btn-sm" onClick={() => handleQuickPlay(s)}
-                      disabled={!currentAccount || pingingNow} title={currentAccount ? 'Quick Play' : 'Select an account first'}>
+                    <button className="btn btn-primary btn-sm" onClick={() => handlePlayClick(s)}
+                      disabled={accounts.length === 0 || pingingNow} title={accounts.length === 0 ? 'Add an account first' : 'Quick Play'}>
                       <Zap size={13} /> Play
+                    </button>
+                    <button className="btn btn-ghost btn-xs" onClick={() => { setEditServer(s); setEditVersion(s.version || '') }} title="Edit">
+                      <Edit3 size={12} />
                     </button>
                     <button className="btn btn-ghost btn-xs" onClick={() => handleRemove(s.id)} title="Remove server" style={{ color: 'var(--error)' }}>
                       <Trash2 size={12} />
@@ -230,7 +287,7 @@ export default function ServersPage({ currentAccount, onLaunch }: ServersPagePro
         actions={
           <>
             <button className="btn btn-secondary" onClick={() => { setShowAdd(false); setAddStatus(null) }}>Cancel</button>
-            <button className="btn btn-primary" onClick={handleAdd} disabled={!newName.trim() || !newAddress.trim()}>Add</button>
+            <button className="btn btn-primary" onClick={handleAdd} disabled={!newName.trim() || !newAddress.trim() || !newVersion.trim()}>Add</button>
           </>
         }>
         <div className="form-group">
@@ -292,8 +349,70 @@ export default function ServersPage({ currentAccount, onLaunch }: ServersPagePro
           </div>
         )}
         <div className="form-group" style={{ marginBottom: 0 }}>
-          <label className="form-label">Minecraft Version (optional)</label>
+          <label className="form-label">Minecraft Version <span style={{ color: 'var(--error)' }}>*</span></label>
           <input className="input" placeholder="e.g. 1.20.4" value={newVersion} onChange={e => setNewVersion(e.target.value)} />
+          <div className="text-xs text-muted" style={{ marginTop: 4 }}>Required. Auto-downloaded if not installed.</div>
+        </div>
+      </Modal>
+
+      <Modal open={editServer !== null} onClose={() => setEditServer(null)} title={editServer ? `Edit: ${editServer.name}` : ''}
+        actions={
+          <>
+            <button className="btn btn-secondary" onClick={() => setEditServer(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleEdit} disabled={!editVersion.trim()}>Save</button>
+          </>
+        }>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="form-label">Minecraft Version <span style={{ color: 'var(--error)' }}>*</span></label>
+          <input className="input" placeholder="e.g. 1.20.4" value={editVersion} onChange={e => setEditVersion(e.target.value)} autoFocus />
+          <div className="text-xs text-muted" style={{ marginTop: 4 }}>This version will be auto-downloaded on Play if missing.</div>
+        </div>
+      </Modal>
+      {installProgress && (
+        <div className="modal-overlay" style={{ zIndex: 5000 }}>
+          <div className="modal" style={{ maxWidth: 440, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <h2 className="modal-title">{installProgress.status === 'done' ? 'Installed' : 'Installing...'}</h2>
+            <p className="text-sm text-muted" style={{ marginBottom: 16 }}>{installProgress.message}</p>
+            <div className="progress-bar" style={{ width: '100%', height: 8 }}>
+              <div className="progress-fill" style={{ width: `${installProgress.progress}%` }} />
+            </div>
+            <div className="text-xs text-muted" style={{ marginTop: 8 }}>{installProgress.progress}%</div>
+          </div>
+        </div>
+      )}
+      <Modal
+        open={pendingPlay !== null}
+        onClose={() => setPendingPlay(null)}
+        title="Choose Account"
+        actions={
+          <button className="btn btn-secondary" onClick={() => setPendingPlay(null)}>
+            Cancel
+          </button>
+        }
+      >
+        <p className="text-sm text-muted" style={{ marginBottom: 12 }}>
+          Select which account to use for this server:
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {accounts.map(acc => (
+            <button
+              key={acc.id}
+              className="card"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                cursor: 'pointer', textAlign: 'left', width: '100%', border: 'none',
+              }}
+              onClick={() => handlePlayAs(acc.id)}
+            >
+              <div className="skin-avatar" style={{ width: 28, height: 28, fontSize: 12 }}>
+                {acc.username.charAt(0).toUpperCase()}
+              </div>
+              <span style={{ fontWeight: 500 }}>{acc.username}</span>
+              {acc.id === currentAccount?.id && (
+                <span className="text-xs text-accent" style={{ marginLeft: 'auto' }}>Current</span>
+              )}
+            </button>
+          ))}
         </div>
       </Modal>
       </>

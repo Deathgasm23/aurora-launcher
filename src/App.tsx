@@ -182,7 +182,7 @@ export default function App() {
       case 'saves':
         return <Saves />
       case 'servers':
-        return <ServersPage currentAccount={currentAccount} onLaunch={handleLaunch} />
+        return <ServersPage currentAccount={currentAccount} />
       case 'crash-reports':
         return <CrashReports />
       default:
@@ -228,7 +228,7 @@ export default function App() {
     <div className="app-layout">
       <Titlebar />
       <Sidebar activePage={activePage} onNavigate={setActivePage} newVersionsCount={newVersionsCount} onNewVersionsRead={() => setNewVersionsCount(0)} />
-      {updateInfo && (
+      {!firstLaunch && updateInfo && (
         <div className="update-bar">
           {updateInfo.status === 'checking' && (
             <><Loader2 size={14} className="spinner" /> Checking for updates...</>

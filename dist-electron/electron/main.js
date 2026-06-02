@@ -213,8 +213,17 @@ const setupAutoUpdater = () => {
         mainWindow?.webContents.send('update:downloaded', info);
     });
     electron_updater_1.autoUpdater.on('error', (err) => {
-        logsService.add('error', `Update error: ${err.message}`, 'updater');
-        mainWindow?.webContents.send('update:error', err.message);
+        const msg = err.message || '';
+        logsService.add('error', `Update error: ${msg}`, 'updater');
+        // 404 means no releases exist yet — not an error worth showing to the user
+        if (/404|No release|not found/i.test(msg)) {
+            mainWindow?.webContents.send('update:not-available', null);
+            return;
+        }
+        // Strip HTTP headers, cookies, and response body — keep only the first line
+        const firstLine = msg.replace(/\\n/g, '\n').split('\n')[0].trim();
+        const sanitized = firstLine.length > 80 ? firstLine.slice(0, 80) + '...' : firstLine;
+        mainWindow?.webContents.send('update:error', sanitized);
     });
 };
 function setupTray() {
@@ -715,11 +724,12 @@ function setupIPCHandlers() {
     });
 }
 electron_1.app.whenReady().then(() => {
+    const portableExe = process.env.PORTABLE_EXECUTABLE_FILE || electron_1.app.getPath('exe');
     const dataDir = electron_1.app.isPackaged
-        ? path.join(path.dirname(electron_1.app.getPath('exe')), 'data')
+        ? path.join(path.dirname(portableExe), 'data')
         : electron_1.app.getPath('userData');
     const mcBasePath = electron_1.app.isPackaged
-        ? path.join(path.dirname(electron_1.app.getPath('exe')), 'minecraft')
+        ? path.join(path.dirname(portableExe), 'minecraft')
         : path.join(electron_1.app.getPath('home'), '.aurora-launcher', 'minecraft');
     authService = new auth_service_1.AuthService(dataDir);
     minecraftService = new minecraft_service_1.MinecraftService(mcBasePath);

@@ -43,9 +43,17 @@ export class LaunchService extends EventEmitter {
     }
 
     const args = this.buildLaunchArgs(account, versionJson, mcDir, settings, extras)
+    const vm = settings.versionMemory?.[versionJson.id]
+    const launchMaxMem = vm?.maxMemory || settings.maxMemory || 4096
+
+    if (extras?.serverAddress) {
+      this.writeServerList(mcDir, version.id, extras.serverAddress, extras.serverPort || 25565)
+      this.emit('output', `Auto-connecting to server: ${extras.serverAddress}:${extras.serverPort || 25565}\n`)
+    }
 
     this.emit('output', `Launching ${version.id} with Java: ${javaPath}\n`)
-    this.emit('output', `Memory: ${settings.minMemory}M - ${settings.maxMemory}M\n`)
+    this.emit('output', `Memory: 1024M - ${launchMaxMem}M${vm?.maxMemory ? ' (per-version)' : ''}\n`)
+    this.emit('output', `Command: ${javaPath} ${args.slice(0, 3).join(' ')} ... ${args.slice(-6).join(' ')}\n`)
 
     return new Promise((resolve, reject) => {
       try {
@@ -84,8 +92,9 @@ export class LaunchService extends EventEmitter {
   private buildLaunchArgs(account: LaunchOptions['account'], versionJson: VersionJson, mcDir: string, settings: LaunchOptions['settings'], extras?: LaunchOptions['extras']): string[] {
     const args: string[] = []
 
-    const minMem = settings.minMemory || 1024
-    const maxMem = settings.maxMemory || 4096
+    const minMem = 1024
+    const vm = settings.versionMemory?.[versionJson.id]
+    const maxMem = vm?.maxMemory || settings.maxMemory || 4096
     args.push(`-Xms${minMem}M`, `-Xmx${maxMem}M`)
 
     if (settings.javaArgs) {
@@ -105,6 +114,57 @@ export class LaunchService extends EventEmitter {
     args.push(...gameArgs)
 
     return args
+  }
+
+  private writeServerList(mcDir: string, name: string, address: string, port: number): void {
+    try {
+      const serversPath = path.join(mcDir, 'servers.dat')
+      const nbt = require('prismarine-nbt')
+      const newIp = `${address}:${port}`
+
+      this.emit('output', `Writing ${newIp} to server list at ${serversPath}\n`)
+
+      let entries: any[] = []
+      if (fs.existsSync(serversPath)) {
+        try {
+          const raw = fs.readFileSync(serversPath)
+          const parsed = nbt.parseUncompressed(raw)
+          const list = parsed?.value?.servers?.value?.value
+          if (Array.isArray(list)) {
+            for (const e of list) {
+              if (e.ip?.value === newIp) {
+                entries = [{ name: { type: 'string', value: name }, ip: { type: 'string', value: newIp }, icon: { type: 'string', value: '' }, acceptTextures: { type: 'byte', value: 0 } }]
+                this.emit('output', `Updated ${name} in multiplayer server list\n`)
+                const data = nbt.writeUncompressed({ name: '', type: 'compound', value: { servers: { type: 'list', value: { type: 'compound', value: entries } } } })
+                fs.writeFileSync(serversPath, data)
+                return
+              }
+              entries.push(e)
+            }
+          }
+        } catch (err) {
+          this.emit('output', `Reading existing servers.dat failed, will overwrite: ${err}\n`)
+          entries = []
+        }
+      }
+
+      entries.push({
+        name: { type: 'string', value: name },
+        ip: { type: 'string', value: newIp },
+        icon: { type: 'string', value: '' },
+        acceptTextures: { type: 'byte', value: 0 },
+      })
+
+      const data = nbt.writeUncompressed({ name: '', type: 'compound', value: { servers: { type: 'list', value: { type: 'compound', value: entries } } } })
+      fs.writeFileSync(serversPath, data)
+
+      // Verify write by reading back
+      const verify = nbt.parseUncompressed(fs.readFileSync(serversPath))
+      const count = verify?.value?.servers?.value?.value?.length || 0
+      this.emit('output', `Added ${name} to multiplayer server list (${count} entries)\n`)
+    } catch (err: any) {
+      this.emit('output', `Could not update server list: ${err.message}\n`)
+    }
   }
 
   private async detectJavaVersion(javaPath: string): Promise<void> {
@@ -189,27 +249,27 @@ export class LaunchService extends EventEmitter {
     const features: Record<string, boolean> = {
       is_demo_user: false,
       has_custom_resolution: settings.width > 0 && settings.height > 0,
-      has_quick_plays_support: false,
-      is_quick_play_singleplayer: false,
-      is_quick_play_multiplayer: false,
+      has_quick_plays_support: !!extras?.serverAddress || !!extras?.worldName,
+      is_quick_play_singleplayer: !!extras?.worldName,
+      is_quick_play_multiplayer: !!extras?.serverAddress,
       is_quick_play_realms: false,
     }
 
     if (versionJson.arguments?.game) {
       for (const arg of versionJson.arguments.game) {
         if (typeof arg === 'string') {
-          args.push(this.replaceTokens(arg, account, versionJson, mcDir, settings))
+          args.push(this.replaceTokens(arg, account, versionJson, mcDir, settings, extras))
         } else if (this.evaluateRules(arg.rules, features)) {
           const values = Array.isArray(arg.value) ? arg.value : [arg.value]
           for (const v of values) {
-            args.push(this.replaceTokens(v, account, versionJson, mcDir, settings))
+            args.push(this.replaceTokens(v, account, versionJson, mcDir, settings, extras))
           }
         }
       }
     } else if (versionJson.minecraftArguments) {
       const tokens = versionJson.minecraftArguments.split(/\s+/)
       for (const token of tokens) {
-        args.push(this.replaceTokens(token, account, versionJson, mcDir, settings))
+        args.push(this.replaceTokens(token, account, versionJson, mcDir, settings, extras))
       }
     }
 
@@ -221,12 +281,13 @@ export class LaunchService extends EventEmitter {
     }
 
     if (extras?.serverAddress) {
-      args.push('--server', extras.serverAddress)
-      if (extras.serverPort) args.push('--port', extras.serverPort.toString())
-    }
-
-    if (extras?.worldName) {
-      args.push('--quickPlaySingleplayer', extras.worldName)
+      const hasQuickPlay = versionJson.arguments?.game?.some((arg: any) =>
+        typeof arg === 'object' && arg.rules?.some((r: any) => r.features?.is_quick_play_multiplayer !== undefined)
+      )
+      if (!hasQuickPlay) {
+        args.push('--server', extras.serverAddress)
+        if (extras.serverPort) args.push('--port', extras.serverPort.toString())
+      }
     }
 
     return args
@@ -263,7 +324,15 @@ export class LaunchService extends EventEmitter {
     versionJson: VersionJson,
     mcDir: string,
     settings: LaunchOptions['settings'],
+    extras?: LaunchOptions['extras'],
   ): string {
+    const quickPlayMultiplayer = extras?.serverAddress
+      ? `${extras.serverAddress}:${extras.serverPort || 25565}`
+      : ''
+    const quickPlaySingleplayer = extras?.worldName || ''
+    const quickPlayPath = quickPlayMultiplayer || quickPlaySingleplayer
+      ? path.join(mcDir, 'quickPlay', 'config.json')
+      : ''
     return arg
       .replace('${auth_player_name}', account.username)
       .replace('${auth_session}', account.accessToken || '')
@@ -279,12 +348,16 @@ export class LaunchService extends EventEmitter {
       .replace('${resolution_width}', settings.width.toString())
       .replace('${resolution_height}', settings.height.toString())
       .replace('${launcher_name}', 'aurora-launcher')
-      .replace('${launcher_version}', '1.2.1')
+      .replace('${launcher_version}', '1.2.3')
       .replace('${classpath}', '')
       .replace('${library_directory}', path.join(mcDir, 'libraries'))
       .replace('${natives_directory}', path.join(mcDir, 'natives'))
       .replace('${version_type}', versionJson.type || 'release')
       .replace('${profile_name}', versionJson.id)
+      .replace('${quickPlayPath}', quickPlayPath)
+      .replace('${quickPlayMultiplayer}', quickPlayMultiplayer)
+      .replace('${quickPlaySingleplayer}', quickPlaySingleplayer)
+      .replace('${quickPlayRealms}', '')
   }
 
   private getCurrentOS(): string {

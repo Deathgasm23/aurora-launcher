@@ -175,8 +175,17 @@ const setupAutoUpdater = (): void => {
     mainWindow?.webContents.send('update:downloaded', info)
   })
   autoUpdater.on('error', (err) => {
-    logsService.add('error', `Update error: ${err.message}`, 'updater')
-    mainWindow?.webContents.send('update:error', err.message)
+    const msg = err.message || ''
+    logsService.add('error', `Update error: ${msg}`, 'updater')
+    // 404 means no releases exist yet — not an error worth showing to the user
+    if (/404|No release|not found/i.test(msg)) {
+      mainWindow?.webContents.send('update:not-available', null)
+      return
+    }
+    // Strip HTTP headers, cookies, and response body — keep only the first line
+    const firstLine = msg.replace(/\\n/g, '\n').split('\n')[0].trim()
+    const sanitized = firstLine.length > 80 ? firstLine.slice(0, 80) + '...' : firstLine
+    mainWindow?.webContents.send('update:error', sanitized)
   })
 }
 
@@ -675,11 +684,12 @@ function setupIPCHandlers(): void {
 }
 
 app.whenReady().then(() => {
+  const portableExe = process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe')
   const dataDir = app.isPackaged
-    ? path.join(path.dirname(app.getPath('exe')), 'data')
+    ? path.join(path.dirname(portableExe), 'data')
     : app.getPath('userData')
   const mcBasePath = app.isPackaged
-    ? path.join(path.dirname(app.getPath('exe')), 'minecraft')
+    ? path.join(path.dirname(portableExe), 'minecraft')
     : path.join(app.getPath('home'), '.aurora-launcher', 'minecraft')
 
   authService = new AuthService(dataDir)

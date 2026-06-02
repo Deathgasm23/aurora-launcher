@@ -39,6 +39,12 @@ const path = __importStar(require("path"));
 const crypto = __importStar(require("crypto"));
 const events_1 = require("events");
 const VERSION_MANIFEST_URL = 'https://launchermeta.mojang.com/mc/game/version_manifest.json';
+let _fetch = null;
+async function getFetch() {
+    if (!_fetch)
+        _fetch = (await Promise.resolve().then(() => __importStar(require('node-fetch')))).default;
+    return _fetch;
+}
 class MinecraftService extends events_1.EventEmitter {
     constructor(basePath) {
         super();
@@ -60,8 +66,7 @@ class MinecraftService extends events_1.EventEmitter {
         });
     }
     async fetchManifest() {
-        const fetch = (await Promise.resolve().then(() => __importStar(require('node-fetch')))).default;
-        const response = await fetch(VERSION_MANIFEST_URL);
+        const response = await (await getFetch())(VERSION_MANIFEST_URL);
         if (!response.ok)
             throw new Error(`Failed to fetch version manifest: ${response.status}`);
         const data = await response.json();
@@ -83,8 +88,7 @@ class MinecraftService extends events_1.EventEmitter {
         return this.manifest;
     }
     async checkForNewVersions() {
-        const fetch = (await Promise.resolve().then(() => __importStar(require('node-fetch')))).default;
-        const response = await fetch(VERSION_MANIFEST_URL);
+        const response = await (await getFetch())(VERSION_MANIFEST_URL);
         if (!response.ok)
             throw new Error(`Failed to fetch manifest: ${response.status}`);
         const data = await response.json();
@@ -118,8 +122,7 @@ class MinecraftService extends events_1.EventEmitter {
         const version = this.manifest.versions.find(v => v.id === versionId);
         if (!version)
             throw new Error(`Version ${versionId} not found in manifest`);
-        const fetch = (await Promise.resolve().then(() => __importStar(require('node-fetch')))).default;
-        const response = await fetch(version.url);
+        const response = await (await getFetch())(version.url);
         if (!response.ok)
             throw new Error(`Failed to fetch version JSON: ${response.status}`);
         return response.json();
@@ -163,14 +166,12 @@ class MinecraftService extends events_1.EventEmitter {
         fs.writeFileSync(path.join(versionDir, `${versionId}.json`), JSON.stringify(versionJson, null, 2));
         this.emit('progress', {
             versionId, status: 'downloading', progress: 10,
-            message: 'Downloading client jar...',
+            message: 'Downloading client jar + assets index...',
         });
-        await this.downloadWithVerify(versionJson.downloads.client.url, path.join(versionDir, `${versionId}.jar`), versionJson.downloads.client.sha1);
-        this.emit('progress', {
-            versionId, status: 'downloading', progress: 30,
-            message: 'Downloading assets index...',
-        });
-        await this.downloadAssetIndex(versionJson.assetIndex);
+        await Promise.all([
+            this.downloadWithVerify(versionJson.downloads.client.url, path.join(versionDir, `${versionId}.jar`), versionJson.downloads.client.sha1),
+            this.downloadAssetIndex(versionJson.assetIndex),
+        ]);
         this.emit('progress', {
             versionId, status: 'downloading', progress: 35,
             message: 'Downloading assets...',
@@ -180,7 +181,7 @@ class MinecraftService extends events_1.EventEmitter {
             versionId, status: 'downloading', progress: 45,
             message: 'Downloading libraries...',
         });
-        await this.downloadLibraries(versionJson.libraries);
+        await this.downloadLibraries(versionJson.libraries, versionId);
         this.emit('progress', {
             versionId, status: 'done', progress: 100,
             message: `${versionId} installed successfully!`,
@@ -206,10 +207,9 @@ class MinecraftService extends events_1.EventEmitter {
             }
             catch { }
         }
-        const fetch = (await Promise.resolve().then(() => __importStar(require('node-fetch')))).default;
         for (let attempt = 0; attempt < retries; attempt++) {
             try {
-                const response = await fetch(url);
+                const response = await (await getFetch())(url);
                 if (!response.ok)
                     throw new Error(`HTTP ${response.status}`);
                 const buffer = Buffer.from(await response.arrayBuffer());
@@ -245,6 +245,35 @@ class MinecraftService extends events_1.EventEmitter {
         }
         await this.downloadWithVerify(assetIndex.url, indexPath, assetIndex.sha1);
     }
+    async runConcurrent(items, concurrency, fn) {
+        let idx = 0;
+        let active = 0;
+        let completed = 0;
+        const total = items.length;
+        const errors = [];
+        return new Promise((resolve) => {
+            const next = () => {
+                while (idx < total && active < concurrency) {
+                    const i = idx++;
+                    active++;
+                    fn(items[i])
+                        .catch((err) => errors.push(err))
+                        .finally(() => {
+                        active--;
+                        completed++;
+                        if (completed === total)
+                            resolve();
+                        else
+                            next();
+                    });
+                }
+            };
+            next();
+        }).then(() => {
+            if (errors.length > 0)
+                console.warn(`${errors.length} concurrent downloads failed`);
+        });
+    }
     async downloadAssets(assetIndex, versionId) {
         const indexPath = path.join(this.basePath, 'assets', 'indexes', `${assetIndex.id}.json`);
         if (!fs.existsSync(indexPath))
@@ -267,47 +296,39 @@ class MinecraftService extends events_1.EventEmitter {
             if (versionId) {
                 this.emit('progress', {
                     versionId, status: 'downloading',
-                    progress: 35 + Math.round(pct * 0.10),
+                    progress: 35 + Math.round(pct * 0.35),
                     message: `Downloading assets... ${done} new, ${skipped} cached (${total} total)`,
                 });
             }
         };
-        for (let i = 0; i < entries.length; i += concurrency) {
-            const batch = entries.slice(i, i + concurrency);
-            await Promise.allSettled(batch.map(async ([, info]) => {
-                const hash = info.hash;
-                const subDir = hash.substring(0, 2);
-                const destPath = path.join(this.basePath, 'assets', 'objects', subDir, hash);
-                if (fs.existsSync(destPath)) {
-                    skipped++;
-                    return;
-                }
-                try {
-                    await this.downloadWithVerify(`${baseUrl}/${subDir}/${hash}`, destPath, hash);
-                    done++;
-                }
-                catch {
-                    skipped++;
-                }
-            }));
-            if (versionId && i % (concurrency * 5) === 0)
-                emitProgress();
-        }
+        await this.runConcurrent(entries, concurrency, async ([, info]) => {
+            const hash = info.hash;
+            const subDir = hash.substring(0, 2);
+            const destPath = path.join(this.basePath, 'assets', 'objects', subDir, hash);
+            if (fs.existsSync(destPath)) {
+                skipped++;
+                return;
+            }
+            try {
+                await this.downloadWithVerify(`${baseUrl}/${subDir}/${hash}`, destPath, hash);
+                done++;
+            }
+            catch {
+                skipped++;
+            }
+            emitProgress();
+        });
         emitProgress();
     }
-    async downloadLibraries(libraries) {
+    async downloadLibraries(libraries, versionId) {
         const isWin = process.platform === 'win32';
         const isLin = process.platform === 'linux';
         const isMac = process.platform === 'darwin';
+        const downloads = [];
         for (const lib of libraries) {
             if (lib.downloads?.artifact) {
-                const artifact = lib.downloads.artifact;
-                try {
-                    await this.downloadWithVerify(artifact.url, path.join(this.basePath, 'libraries', ...artifact.path.split('/')), artifact.sha1);
-                }
-                catch (err) {
-                    console.warn(`Failed to download library ${lib.name}:`, err);
-                }
+                const a = lib.downloads.artifact;
+                downloads.push({ url: a.url, dest: path.join(this.basePath, 'libraries', ...a.path.split('/')), sha1: a.sha1 });
             }
             if (lib.natives && lib.downloads?.classifiers) {
                 for (const os of Object.keys(lib.natives)) {
@@ -318,18 +339,32 @@ class MinecraftService extends events_1.EventEmitter {
                     else if (!((isWin && os === 'windows') || (isLin && os === 'linux') || (isMac && os === 'osx'))) {
                         continue;
                     }
-                    const classifierEntry = lib.downloads.classifiers[classifier];
-                    if (classifierEntry) {
-                        try {
-                            await this.downloadWithVerify(classifierEntry.url, path.join(this.basePath, 'natives', classifier), classifierEntry.sha1);
-                        }
-                        catch (err) {
-                            console.warn(`Failed to download native lib ${classifier}:`, err);
-                        }
-                    }
+                    const entry = lib.downloads.classifiers[classifier];
+                    if (entry)
+                        downloads.push({ url: entry.url, dest: path.join(this.basePath, 'natives', classifier), sha1: entry.sha1 });
                 }
             }
         }
+        const concurrency = 20;
+        const total = downloads.length;
+        let done = 0;
+        await this.runConcurrent(downloads, concurrency, async ({ url, dest, sha1 }) => {
+            try {
+                await this.downloadWithVerify(url, dest, sha1);
+            }
+            catch (err) {
+                console.warn(`Failed to download ${path.basename(dest)}:`, err);
+            }
+            done++;
+            if (versionId) {
+                const pct = Math.round(done / total * 100);
+                this.emit('progress', {
+                    versionId, status: 'downloading',
+                    progress: 70 + Math.round(pct * 0.20),
+                    message: `Downloading libraries... ${done}/${total}`,
+                });
+            }
+        });
     }
 }
 exports.MinecraftService = MinecraftService;

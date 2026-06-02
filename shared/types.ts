@@ -113,6 +113,10 @@ export type JavaInstallation = {
   architecture: string
 }
 
+export type VersionMemory = {
+  maxMemory?: number
+}
+
 export interface LauncherSettings {
   minecraftDirectory: string
   javaPath: string
@@ -126,6 +130,7 @@ export interface LauncherSettings {
   accentColor: string
   launchArgs: string
   lastVersion?: string
+  versionMemory?: Record<string, VersionMemory>
 }
 
 export type LaunchOptions = {

@@ -1,6 +1,6 @@
 {
   "name": "aurora-launcher",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "author": "Morbryn",
   "description": "Aurora Launcher - Modern custom Minecraft Launcher",
   "main": "dist-electron/electron/main.js",
@@ -21,6 +21,7 @@
     "electron-updater": "^6.8.3",
     "lucide-react": "^0.294.0",
     "node-fetch": "^2.7.0",
+    "prismarine-nbt": "^2.8.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -32,6 +33,7 @@
     "concurrently": "^8.2.2",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
+    "sharp": "^0.34.5",
     "typescript": "^5.3.3",
     "vite": "^5.0.8",
     "wait-on": "^7.2.0"
@@ -73,7 +75,8 @@
       "target": [
         "dmg"
       ],
-      "icon": "public/icon.png"
+      "icon": "public/icon-1024.png",
+      "category": "public.app-category.games"
     },
     "publish": {
       "provider": "github",

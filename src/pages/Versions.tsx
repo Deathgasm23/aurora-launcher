@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Download, RefreshCw, Package, Loader2, Trash2, RotateCcw, Search, Play, FolderOpen, Info, PlayIcon, ChevronDown, ChevronRight } from 'lucide-react'
-import type { MinecraftVersion, MinecraftAccount, InstallProgress, VersionJson } from '../../shared/types'
+import { Download, RefreshCw, Package, Loader2, Trash2, RotateCcw, Search, Play, FolderOpen, Info, PlayIcon, ChevronDown, ChevronRight, MemoryStick } from 'lucide-react'
+import type { MinecraftVersion, MinecraftAccount, InstallProgress, VersionJson, LauncherSettings } from '../../shared/types'
 import Notification from '../components/common/Notification'
 import EmptyState from '../components/common/EmptyState'
 import ConfirmDialog from '../components/common/ConfirmDialog'
@@ -33,6 +33,9 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; versionId: string; installed: boolean } | null>(null)
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [memSettings, setMemSettings] = useState<LauncherSettings | null>(null)
+  const [memVersionId, setMemVersionId] = useState<string | null>(null)
+  const [memValue, setMemValue] = useState(4096)
 
   const loadVersions = useCallback(async () => {
     try {
@@ -133,6 +136,39 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
     }
     await window.electronAPI.launch.setLastVersion(versionId)
     onLaunch(currentAccount.id, versionId)
+  }
+
+  async function openMemoryModal(versionId: string) {
+    const settings = await window.electronAPI.settings.get()
+    setMemSettings(settings)
+    setMemVersionId(versionId)
+    setMemValue(settings.versionMemory?.[versionId]?.maxMemory || settings.maxMemory || 4096)
+  }
+
+  async function saveMemorySetting() {
+    if (!memSettings || !memVersionId) return
+    const updated = {
+      ...memSettings,
+      versionMemory: {
+        ...memSettings.versionMemory,
+        [memVersionId]: { maxMemory: memValue },
+      },
+    }
+    await window.electronAPI.settings.set(updated)
+    setMemSettings(null)
+    setMemVersionId(null)
+    setNotif({ message: `RAM saved for ${memVersionId}`, type: 'success' })
+  }
+
+  async function clearMemorySetting() {
+    if (!memSettings || !memVersionId) return
+    const vm = { ...memSettings.versionMemory }
+    delete vm[memVersionId]
+    const updated = { ...memSettings, versionMemory: vm }
+    await window.electronAPI.settings.set(updated)
+    setMemSettings(null)
+    setMemVersionId(null)
+    setNotif({ message: `RAM reset to global default for ${memVersionId}`, type: 'info' })
   }
 
   const filteredVersions = versions.filter(v => {
@@ -382,10 +418,39 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
         items={[
           { label: 'Play', icon: <PlayIcon size={14} />, onClick: () => contextMenu && handlePlay(contextMenu.versionId), disabled: !contextMenu?.installed || !currentAccount },
           { label: contextMenu?.installed ? 'Reinstall' : 'Install', icon: <Download size={14} />, onClick: () => contextMenu && (contextMenu.installed ? setConfirmAction({ type: 'reinstall', id: contextMenu.versionId }) : handleInstall(contextMenu.versionId)) },
+          { label: 'Memory', icon: <MemoryStick size={14} />, onClick: () => contextMenu && openMemoryModal(contextMenu.versionId) },
           { label: 'Details', icon: <Info size={14} />, onClick: () => contextMenu && handleShowDetails(contextMenu.versionId) },
           { label: 'Delete', icon: <Trash2 size={14} />, onClick: () => contextMenu && setConfirmAction({ type: 'delete', id: contextMenu.versionId }), danger: true, disabled: !contextMenu?.installed },
         ]}
       />
+
+      <Modal
+        open={memVersionId !== null}
+        onClose={() => { setMemVersionId(null); setMemSettings(null) }}
+        title={memVersionId ? `Memory: ${memVersionId}` : ''}
+        actions={
+          <div className="flex items-center gap-2" style={{ width: '100%', justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost btn-sm" onClick={clearMemorySetting}>Use Global</button>
+            <button className="btn btn-secondary" onClick={() => { setMemVersionId(null); setMemSettings(null) }}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveMemorySetting}>Save</button>
+          </div>
+        }>
+        <div className="form-group" style={{ marginBottom: 8 }}>
+          <div className="form-label">Max RAM (per-version override)</div>
+          <div className="flex items-center gap-3">
+            <input type="range" min={1024} max={16384} step={256} value={memValue}
+              onChange={e => setMemValue(parseInt(e.target.value))}
+              className="ram-slider" style={{ flex: 1 }} />
+            <input className="input" type="number" value={memValue}
+              onChange={e => setMemValue(Math.max(1024, Math.min(65536, parseInt(e.target.value) || 1024)))}
+              min={1024} max={65536} style={{ width: 100, textAlign: 'center' }} />
+            <span className="text-sm text-muted">MB</span>
+          </div>
+          <div className="text-xs text-muted" style={{ marginTop: 6 }}>
+            Overrides the global max RAM for this version. Leave empty or click "Use Global" to fall back to Settings.
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={detailsVersion !== null}
