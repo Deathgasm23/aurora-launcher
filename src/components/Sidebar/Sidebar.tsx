@@ -1,4 +1,5 @@
-import { Home, Users, Package, Settings, ScrollText, Gem, Zap, Save, Server, AlertTriangle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Home, Users, Package, Settings, ScrollText, Gem, Zap, Server, AlertTriangle } from 'lucide-react'
 
 interface NavbarProps {
   activePage: string
@@ -11,14 +12,20 @@ const navItems = [
   { id: 'home', label: 'Home', icon: Home },
   { id: 'accounts', label: 'Accounts', icon: Users },
   { id: 'versions', label: 'Versions', icon: Package },
-  { id: 'saves', label: 'Saves', icon: Save },
+
   { id: 'servers', label: 'Servers', icon: Server },
   { id: 'crash-reports', label: 'Crashes', icon: AlertTriangle },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
-export default function Sidebar({ activePage, onNavigate, newVersionsCount, onNewVersionsRead, downloadQueueCount }: NavbarProps) {
+export default function Sidebar({ activePage, onNavigate, newVersionsCount, onNewVersionsRead }: NavbarProps) {
+  const [appVersion, setAppVersion] = useState('')
+
+  useEffect(() => {
+    window.electronAPI.app.getVersion().then(setAppVersion).catch(() => {})
+  }, [])
+
   return (
     <div className="navbar">
       <div className="navbar-brand">
@@ -46,7 +53,7 @@ export default function Sidebar({ activePage, onNavigate, newVersionsCount, onNe
       </nav>
       <div className="navbar-meta">
         <Zap size={12} />
-        <span>v1.2.1</span>
+        <span>v{appVersion || '1.2.7'}</span>
       </div>
     </div>
   )

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Play, Loader2, Zap, RefreshCw, Cpu, FolderOpen, Download } from 'lucide-react'
+import { Check, Loader2, Zap, RefreshCw, Cpu, FolderOpen, Download } from 'lucide-react'
 import type { MinecraftAccount, MinecraftVersion, InstallProgress } from '../../shared/types'
 import Notification from '../components/common/Notification'
 
@@ -14,6 +14,7 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
   const [manifest, setManifest] = useState<{ versions: MinecraftVersion[]; latest: { release: string; snapshot: string } } | null>(null)
   const [selectedVersion, setSelectedVersion] = useState('')
   const [launching, setLaunching] = useState(false)
+  const [gameRunning, setGameRunning] = useState(false)
   const [notif, setNotif] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null)
   const [javaOverride, setJavaOverride] = useState('')
@@ -57,6 +58,7 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
 
     const onExit = (code: number) => {
       setLaunching(false)
+      setGameRunning(false)
       setNotif({ message: `Game exited with code ${code}`, type: code === 0 ? 'info' : 'error' })
     }
 
@@ -75,11 +77,14 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
       return
     }
     setLaunching(true)
+    setGameRunning(false)
     await window.electronAPI.launch.setLastVersion(selectedVersion)
     const result = await onLaunch(currentAccount.id, selectedVersion, javaOverride || undefined)
+    setLaunching(false)
     if (!result.success) {
-      setLaunching(false)
       setNotif({ message: result.error || 'Failed to launch game', type: 'error' })
+    } else {
+      setGameRunning(true)
     }
   }, [currentAccount, selectedVersion, onLaunch, javaOverride])
 
@@ -140,7 +145,7 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
                 className="select"
                 value={selectedVersion}
                 onChange={e => setSelectedVersion(e.target.value)}
-                disabled={launching}
+                disabled={launching || gameRunning}
                 style={{ flex: 1 }}
               >
                 <option value="">Select version...</option>
@@ -177,7 +182,7 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
                   placeholder="Java path (optional override)"
                   value={javaOverride}
                   onChange={e => setJavaOverride(e.target.value)}
-                  disabled={launching}
+                  disabled={launching || gameRunning}
                   style={{ paddingLeft: 32, fontSize: 12 }}
                 />
                 <Cpu size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
@@ -208,10 +213,12 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
           <button
             className="btn btn-primary launch-btn"
             onClick={handleLaunch}
-            disabled={!currentAccount || !selectedVersion || launching}
+            disabled={!currentAccount || !selectedVersion || launching || gameRunning}
           >
             {launching ? (
               <><Loader2 size={18} className="spinner" /> Launching...</>
+            ) : gameRunning ? (
+              <><Check size={18} /> Launched</>
             ) : (
               <><Zap size={18} /> Launch Game</>
             )}
@@ -228,6 +235,8 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
               </div>
             </div>
           )}
+
+
         </div>
       </div>
       )}

@@ -93,13 +93,6 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
         onDownloaded: (callback) => { electron_1.ipcRenderer.on('update:downloaded', (_event, info) => callback(info)); },
         onError: (callback) => { electron_1.ipcRenderer.on('update:error', (_event, message) => callback(message)); },
     },
-    saves: {
-        list: () => electron_1.ipcRenderer.invoke('saves:list'),
-        backup: (saveName) => electron_1.ipcRenderer.invoke('saves:backup', saveName),
-        listBackups: (saveName) => electron_1.ipcRenderer.invoke('saves:list-backups', saveName),
-        restore: (backupName, originalName) => electron_1.ipcRenderer.invoke('saves:restore', backupName, originalName),
-        deleteBackup: (backupPath) => electron_1.ipcRenderer.invoke('saves:delete-backup', backupPath),
-    },
     servers: {
         list: () => electron_1.ipcRenderer.invoke('servers:list'),
         save: (servers) => electron_1.ipcRenderer.invoke('servers:save', servers),
@@ -108,6 +101,9 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     screenshots: {
         list: () => electron_1.ipcRenderer.invoke('screenshots:list'),
         open: () => electron_1.ipcRenderer.invoke('screenshots:open'),
+    },
+    playtime: {
+        getStats: () => electron_1.ipcRenderer.invoke('playtime:stats'),
     },
     crashReports: {
         list: () => electron_1.ipcRenderer.invoke('crash-reports:list'),

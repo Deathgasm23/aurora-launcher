@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Download, RefreshCw, Loader2, X } from 'lucide-react'
+import { Download, Loader2, X } from 'lucide-react'
 import { MinecraftAccount, LauncherSettings, QueuedDownload } from '../shared/types'
 import Titlebar from './components/Layout/Titlebar'
 import Sidebar from './components/Sidebar/Sidebar'
@@ -8,7 +8,7 @@ import Accounts from './pages/Accounts'
 import Versions from './pages/Versions'
 import Settings from './pages/Settings'
 import Logs from './pages/Logs'
-import Saves from './pages/Saves'
+
 import ServersPage from './pages/ServersPage'
 import CrashReports from './pages/CrashReports'
 
@@ -110,8 +110,7 @@ export default function App() {
       if (e.ctrlKey && !e.shiftKey && !e.metaKey) {
         const pageMap: Record<string, string> = {
           '1': 'home', '2': 'accounts', '3': 'versions',
-          '4': 'settings', '5': 'logs', '6': 'saves',
-          '7': 'servers',
+          '4': 'settings', '5': 'logs', '6': 'servers',
         }
         if (e.key === '-') { e.preventDefault(); setActivePage('crash-reports'); return }
         const page = pageMap[e.key]
@@ -179,8 +178,6 @@ export default function App() {
         return <Settings />
       case 'logs':
         return <Logs />
-      case 'saves':
-        return <Saves />
       case 'servers':
         return <ServersPage currentAccount={currentAccount} />
       case 'crash-reports':
@@ -228,11 +225,8 @@ export default function App() {
     <div className="app-layout">
       <Titlebar />
       <Sidebar activePage={activePage} onNavigate={setActivePage} newVersionsCount={newVersionsCount} onNewVersionsRead={() => setNewVersionsCount(0)} />
-      {!firstLaunch && updateInfo && (
+      {!firstLaunch && updateInfo && updateInfo.status !== 'checking' && updateInfo.status !== 'uptodate' && (
         <div className="update-bar">
-          {updateInfo.status === 'checking' && (
-            <><Loader2 size={14} className="spinner" /> Checking for updates...</>
-          )}
           {updateInfo.status === 'available' && (
             <><Download size={14} /> Update <strong>v{updateInfo.version}</strong> available
               <button className="btn btn-primary btn-xs" style={{ marginLeft: 'auto' }} onClick={async () => {
@@ -254,11 +248,8 @@ export default function App() {
               <button className="btn btn-ghost btn-xs" onClick={() => setUpdateInfo(null)}><X size={12} /></button>
             </>
           )}
-          {updateInfo.status === 'uptodate' && (
-            <><RefreshCw size={14} /> Already up to date</>
-          )}
           {updateInfo.status === 'error' && (
-            <><X size={14} /> Update check failed: {updateInfo.error}</>
+            <><X size={14} /> Update check: {updateInfo.error}</>
           )}
         </div>
       )}

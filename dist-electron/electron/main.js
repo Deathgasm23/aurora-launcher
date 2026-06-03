@@ -37,6 +37,7 @@ const electron_1 = require("electron");
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 const electron_updater_1 = require("electron-updater");
+electron_1.app.name = 'Aurora Launcher';
 const auth_service_1 = require("./services/auth.service");
 const minecraft_service_1 = require("./services/minecraft.service");
 const launch_service_1 = require("./services/launch.service");
@@ -44,6 +45,7 @@ const settings_service_1 = require("./services/settings.service");
 const java_service_1 = require("./services/java.service");
 const news_service_1 = require("./services/news.service");
 const logs_service_1 = require("./services/logs.service");
+const playtime_service_1 = require("./services/playtime.service");
 const REPO_OWNER = 'Deathgasm23';
 const REPO_NAME = 'aurora-launcher';
 let mainWindow = null;
@@ -56,32 +58,7 @@ let settingsService;
 let javaService;
 let newsService;
 let logsService;
-function dirSize(dirPath) {
-    try {
-        let size = 0;
-        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-        for (const e of entries) {
-            const fullPath = path.join(dirPath, e.name);
-            if (e.isDirectory())
-                size += dirSize(fullPath);
-            else
-                size += fs.statSync(fullPath).size;
-        }
-        return size;
-    }
-    catch {
-        return 0;
-    }
-}
-const formatSize = (bytes) => {
-    if (bytes < 1024)
-        return bytes + ' B';
-    if (bytes < 1024 * 1024)
-        return (bytes / 1024).toFixed(1) + ' KB';
-    if (bytes < 1024 * 1024 * 1024)
-        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
-};
+let playtimeService;
 function writeVarInt(value, buf, offset) {
     while (true) {
         if ((value & ~0x7F) === 0) {
@@ -214,20 +191,19 @@ const setupAutoUpdater = () => {
     });
     electron_updater_1.autoUpdater.on('error', (err) => {
         const msg = err.message || '';
-        logsService.add('error', `Update error: ${msg}`, 'updater');
-        // 404 means no releases exist yet — not an error worth showing to the user
-        if (/404|No release|not found/i.test(msg)) {
+        const shortMsg = msg.replace(/\\n/g, '\n').split('\n')[0].trim();
+        // Silently handle 404 / no-releases — expected before first publish
+        if (/404|No release|not found|Cannot find latest\.yml/i.test(shortMsg)) {
             mainWindow?.webContents.send('update:not-available', null);
             return;
         }
-        // Strip HTTP headers, cookies, and response body — keep only the first line
-        const firstLine = msg.replace(/\\n/g, '\n').split('\n')[0].trim();
-        const sanitized = firstLine.length > 80 ? firstLine.slice(0, 80) + '...' : firstLine;
+        logsService.add('error', `Update error: ${shortMsg}`, 'updater');
+        const sanitized = shortMsg.length > 80 ? shortMsg.slice(0, 80) + '...' : shortMsg;
         mainWindow?.webContents.send('update:error', sanitized);
     });
 };
 function setupTray() {
-    const iconPath = path.join(__dirname, '../public/icon.png');
+    const iconPath = path.join(__dirname, 'icon.png');
     const icon = electron_1.nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
     tray = new electron_1.Tray(icon);
     tray.setToolTip('Aurora Launcher');
@@ -345,6 +321,7 @@ function setupIPCHandlers() {
         const versionJson = await minecraftService.fetchVersionJson(versionId);
         logsService.clear();
         logsService.add('info', `Launching Minecraft ${versionId}...`, 'main');
+        const launchStart = Date.now();
         try {
             launchService.on('output', (data) => {
                 logsService.add('info', data.trimEnd(), 'game');
@@ -355,10 +332,12 @@ function setupIPCHandlers() {
                 mainWindow?.webContents.send('launch:error', data);
             });
             launchService.on('exit', (code) => {
-                logsService.add('info', `Game exited with code ${code}`, 'game');
+                const duration = Date.now() - launchStart;
+                playtimeService.recordSession(account.id, account.username, versionId, launchStart, duration);
+                logsService.add('info', `Game exited with code ${code} (played ${Math.round(duration / 1000)}s)`, 'game');
                 mainWindow?.webContents.send('launch:exit', code);
             });
-            mainWindow?.minimize();
+            mainWindow?.hide();
             await launchService.launchGame({ account, version, settings, versionJson });
             return { success: true };
         }
@@ -389,6 +368,7 @@ function setupIPCHandlers() {
         const versionJson = await minecraftService.fetchVersionJson(versionId);
         logsService.clear();
         logsService.add('info', `Launching Minecraft ${versionId}...`, 'main');
+        const launchStart = Date.now();
         try {
             launchService.on('output', (data) => {
                 logsService.add('info', data.trimEnd(), 'game');
@@ -399,10 +379,12 @@ function setupIPCHandlers() {
                 mainWindow?.webContents.send('launch:error', data);
             });
             launchService.on('exit', (code) => {
-                logsService.add('info', `Game exited with code ${code}`, 'game');
+                const duration = Date.now() - launchStart;
+                playtimeService.recordSession(account.id, account.username, versionId, launchStart, duration);
+                logsService.add('info', `Game exited with code ${code} (played ${Math.round(duration / 1000)}s)`, 'game');
                 mainWindow?.webContents.send('launch:exit', code);
             });
-            mainWindow?.minimize();
+            mainWindow?.hide();
             await launchService.launchGame({ account, version, settings, versionJson, extras });
             return { success: true };
         }
@@ -410,6 +392,7 @@ function setupIPCHandlers() {
             return { success: false, error: err.message };
         }
     });
+    electron_1.ipcMain.handle('playtime:stats', () => playtimeService.getStats());
     electron_1.ipcMain.handle('settings:get', () => settingsService.get());
     electron_1.ipcMain.handle('settings:set', (_event, newSettings) => settingsService.update(newSettings));
     electron_1.ipcMain.handle('settings:get-default', () => settingsService.getDefaults());
@@ -487,97 +470,6 @@ function setupIPCHandlers() {
     electron_1.ipcMain.on('window:close', () => {
         isQuitting = true;
         electron_1.app.quit();
-    });
-    // saves
-    electron_1.ipcMain.handle('saves:list', async () => {
-        const mcDir = settingsService.get().minecraftDirectory;
-        const savesDir = path.join(mcDir, 'saves');
-        if (!fs.existsSync(savesDir))
-            return [];
-        try {
-            const entries = fs.readdirSync(savesDir, { withFileTypes: true });
-            return entries.filter(e => e.isDirectory()).map(e => {
-                const dirPath = path.join(savesDir, e.name);
-                const stats = fs.statSync(dirPath);
-                return {
-                    name: e.name,
-                    path: dirPath,
-                    lastPlayed: stats.mtimeMs,
-                    size: formatSize(dirSize(dirPath)),
-                    icon: fs.existsSync(path.join(dirPath, 'icon.png')) ? path.join(dirPath, 'icon.png') : undefined,
-                };
-            }).sort((a, b) => b.lastPlayed - a.lastPlayed);
-        }
-        catch {
-            return [];
-        }
-    });
-    electron_1.ipcMain.handle('saves:backup', (_event, saveName) => {
-        const mcDir = settingsService.get().minecraftDirectory;
-        const savesDir = path.join(mcDir, 'saves');
-        const backupsDir = path.join(mcDir, 'backups');
-        if (!fs.existsSync(backupsDir))
-            fs.mkdirSync(backupsDir, { recursive: true });
-        const srcDir = path.join(savesDir, saveName);
-        if (!fs.existsSync(srcDir))
-            return { success: false, error: 'Save not found' };
-        try {
-            fs.cpSync(srcDir, path.join(backupsDir, `${saveName}-${Date.now()}`), { recursive: true });
-            return { success: true };
-        }
-        catch (err) {
-            return { success: false, error: err.message };
-        }
-    });
-    electron_1.ipcMain.handle('saves:list-backups', (_event, saveName) => {
-        const mcDir = settingsService.get().minecraftDirectory;
-        const backupsDir = path.join(mcDir, 'backups');
-        if (!fs.existsSync(backupsDir))
-            return [];
-        try {
-            const entries = fs.readdirSync(backupsDir, { withFileTypes: true });
-            return entries.filter(e => e.isDirectory() && e.name.startsWith(saveName + '-')).map(e => {
-                const dirPath = path.join(backupsDir, e.name);
-                const stats = fs.statSync(dirPath);
-                return {
-                    name: e.name,
-                    path: dirPath,
-                    date: stats.birthtimeMs || stats.mtimeMs,
-                    size: formatSize(dirSize(dirPath)),
-                };
-            }).sort((a, b) => b.date - a.date);
-        }
-        catch {
-            return [];
-        }
-    });
-    electron_1.ipcMain.handle('saves:restore', (_event, backupName, originalName) => {
-        const mcDir = settingsService.get().minecraftDirectory;
-        const backupsDir = path.join(mcDir, 'backups');
-        const savesDir = path.join(mcDir, 'saves');
-        const backupPath = path.join(backupsDir, backupName);
-        if (!fs.existsSync(backupPath))
-            return { success: false, error: 'Backup not found' };
-        const savePath = path.join(savesDir, originalName);
-        try {
-            if (fs.existsSync(savePath))
-                fs.rmSync(savePath, { recursive: true, force: true });
-            fs.cpSync(backupPath, savePath, { recursive: true });
-            return { success: true };
-        }
-        catch (err) {
-            return { success: false, error: err.message };
-        }
-    });
-    electron_1.ipcMain.handle('saves:delete-backup', (_event, backupPath) => {
-        try {
-            if (fs.existsSync(backupPath))
-                fs.rmSync(backupPath, { recursive: true, force: true });
-            return { success: true };
-        }
-        catch (err) {
-            return { success: false, error: err.message };
-        }
     });
     // servers
     electron_1.ipcMain.handle('servers:list', () => {
@@ -739,6 +631,7 @@ electron_1.app.whenReady().then(() => {
     javaService = new java_service_1.JavaService();
     newsService = new news_service_1.NewsService();
     logsService = new logs_service_1.LogsService(dataDir);
+    playtimeService = new playtime_service_1.PlaytimeService(dataDir);
     logsService.add('info', 'Launcher starting', 'main');
     setupIPCHandlers();
     setupAutoUpdater();

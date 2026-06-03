@@ -2,6 +2,8 @@ import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage } from 'ele
 import * as path from 'path'
 import * as fs from 'fs'
 import { autoUpdater } from 'electron-updater'
+
+app.name = 'Aurora Launcher'
 import { AuthService } from './services/auth.service'
 import { MinecraftService } from './services/minecraft.service'
 import { LaunchService } from './services/launch.service'
@@ -9,6 +11,7 @@ import { SettingsService } from './services/settings.service'
 import { JavaService } from './services/java.service'
 import { NewsService } from './services/news.service'
 import { LogsService } from './services/logs.service'
+import { PlaytimeService } from './services/playtime.service'
 
 const REPO_OWNER = 'Deathgasm23'
 const REPO_NAME = 'aurora-launcher'
@@ -23,26 +26,7 @@ let settingsService: SettingsService
 let javaService: JavaService
 let newsService: NewsService
 let logsService: LogsService
-
-function dirSize(dirPath: string): number {
-  try {
-    let size = 0
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
-    for (const e of entries) {
-      const fullPath = path.join(dirPath, e.name)
-      if (e.isDirectory()) size += dirSize(fullPath)
-      else size += fs.statSync(fullPath).size
-    }
-    return size
-  } catch { return 0 }
-}
-
-const formatSize = (bytes: number): string => {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB'
-}
+let playtimeService: PlaytimeService
 
 function writeVarInt(value: number, buf: Buffer, offset: number): number {
   while (true) {
@@ -176,21 +160,20 @@ const setupAutoUpdater = (): void => {
   })
   autoUpdater.on('error', (err) => {
     const msg = err.message || ''
-    logsService.add('error', `Update error: ${msg}`, 'updater')
-    // 404 means no releases exist yet — not an error worth showing to the user
-    if (/404|No release|not found/i.test(msg)) {
+    const shortMsg = msg.replace(/\\n/g, '\n').split('\n')[0].trim()
+    // Silently handle 404 / no-releases — expected before first publish
+    if (/404|No release|not found|Cannot find latest\.yml/i.test(shortMsg)) {
       mainWindow?.webContents.send('update:not-available', null)
       return
     }
-    // Strip HTTP headers, cookies, and response body — keep only the first line
-    const firstLine = msg.replace(/\\n/g, '\n').split('\n')[0].trim()
-    const sanitized = firstLine.length > 80 ? firstLine.slice(0, 80) + '...' : firstLine
+    logsService.add('error', `Update error: ${shortMsg}`, 'updater')
+    const sanitized = shortMsg.length > 80 ? shortMsg.slice(0, 80) + '...' : shortMsg
     mainWindow?.webContents.send('update:error', sanitized)
   })
 }
 
 function setupTray(): void {
-  const iconPath = path.join(__dirname, '../public/icon.png')
+  const iconPath = path.join(__dirname, 'icon.png')
   const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
   tray = new Tray(icon)
   tray.setToolTip('Aurora Launcher')
@@ -323,6 +306,8 @@ function setupIPCHandlers(): void {
     logsService.clear()
     logsService.add('info', `Launching Minecraft ${versionId}...`, 'main')
 
+    const launchStart = Date.now()
+
     try {
       launchService.on('output', (data: string) => {
         logsService.add('info', data.trimEnd(), 'game')
@@ -333,11 +318,13 @@ function setupIPCHandlers(): void {
         mainWindow?.webContents.send('launch:error', data)
       })
       launchService.on('exit', (code: number) => {
-        logsService.add('info', `Game exited with code ${code}`, 'game')
+        const duration = Date.now() - launchStart
+        playtimeService.recordSession(account.id, account.username, versionId, launchStart, duration)
+        logsService.add('info', `Game exited with code ${code} (played ${Math.round(duration / 1000)}s)`, 'game')
         mainWindow?.webContents.send('launch:exit', code)
       })
 
-      mainWindow?.minimize()
+      mainWindow?.hide()
       await launchService.launchGame({ account, version, settings, versionJson })
       return { success: true }
     } catch (err: any) {
@@ -371,6 +358,8 @@ function setupIPCHandlers(): void {
     logsService.clear()
     logsService.add('info', `Launching Minecraft ${versionId}...`, 'main')
 
+    const launchStart = Date.now()
+
     try {
       launchService.on('output', (data: string) => {
         logsService.add('info', data.trimEnd(), 'game')
@@ -381,16 +370,20 @@ function setupIPCHandlers(): void {
         mainWindow?.webContents.send('launch:error', data)
       })
       launchService.on('exit', (code: number) => {
-        logsService.add('info', `Game exited with code ${code}`, 'game')
+        const duration = Date.now() - launchStart
+        playtimeService.recordSession(account.id, account.username, versionId, launchStart, duration)
+        logsService.add('info', `Game exited with code ${code} (played ${Math.round(duration / 1000)}s)`, 'game')
         mainWindow?.webContents.send('launch:exit', code)
       })
-      mainWindow?.minimize()
+      mainWindow?.hide()
       await launchService.launchGame({ account, version, settings, versionJson, extras })
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message }
     }
   })
+
+  ipcMain.handle('playtime:stats', () => playtimeService.getStats())
 
   ipcMain.handle('settings:get', () => settingsService.get())
   ipcMain.handle('settings:set', (_event, newSettings: any) => settingsService.update(newSettings))
@@ -474,80 +467,6 @@ function setupIPCHandlers(): void {
   ipcMain.on('window:close', () => {
     isQuitting = true
     app.quit()
-  })
-
-  // saves
-  ipcMain.handle('saves:list', async () => {
-    const mcDir = settingsService.get().minecraftDirectory
-    const savesDir = path.join(mcDir, 'saves')
-    if (!fs.existsSync(savesDir)) return []
-    try {
-      const entries = fs.readdirSync(savesDir, { withFileTypes: true })
-      return entries.filter(e => e.isDirectory()).map(e => {
-        const dirPath = path.join(savesDir, e.name)
-        const stats = fs.statSync(dirPath)
-        return {
-          name: e.name,
-          path: dirPath,
-          lastPlayed: stats.mtimeMs,
-          size: formatSize(dirSize(dirPath)),
-          icon: fs.existsSync(path.join(dirPath, 'icon.png')) ? path.join(dirPath, 'icon.png') : undefined,
-        }
-      }).sort((a, b) => b.lastPlayed - a.lastPlayed)
-    } catch { return [] }
-  })
-
-  ipcMain.handle('saves:backup', (_event, saveName: string) => {
-    const mcDir = settingsService.get().minecraftDirectory
-    const savesDir = path.join(mcDir, 'saves')
-    const backupsDir = path.join(mcDir, 'backups')
-    if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true })
-    const srcDir = path.join(savesDir, saveName)
-    if (!fs.existsSync(srcDir)) return { success: false, error: 'Save not found' }
-    try {
-      fs.cpSync(srcDir, path.join(backupsDir, `${saveName}-${Date.now()}`), { recursive: true })
-      return { success: true }
-    } catch (err: any) { return { success: false, error: err.message } }
-  })
-
-  ipcMain.handle('saves:list-backups', (_event, saveName: string) => {
-    const mcDir = settingsService.get().minecraftDirectory
-    const backupsDir = path.join(mcDir, 'backups')
-    if (!fs.existsSync(backupsDir)) return []
-    try {
-      const entries = fs.readdirSync(backupsDir, { withFileTypes: true })
-      return entries.filter(e => e.isDirectory() && e.name.startsWith(saveName + '-')).map(e => {
-        const dirPath = path.join(backupsDir, e.name)
-        const stats = fs.statSync(dirPath)
-        return {
-          name: e.name,
-          path: dirPath,
-          date: stats.birthtimeMs || stats.mtimeMs,
-          size: formatSize(dirSize(dirPath)),
-        }
-      }).sort((a, b) => b.date - a.date)
-    } catch { return [] }
-  })
-
-  ipcMain.handle('saves:restore', (_event, backupName: string, originalName: string) => {
-    const mcDir = settingsService.get().minecraftDirectory
-    const backupsDir = path.join(mcDir, 'backups')
-    const savesDir = path.join(mcDir, 'saves')
-    const backupPath = path.join(backupsDir, backupName)
-    if (!fs.existsSync(backupPath)) return { success: false, error: 'Backup not found' }
-    const savePath = path.join(savesDir, originalName)
-    try {
-      if (fs.existsSync(savePath)) fs.rmSync(savePath, { recursive: true, force: true })
-      fs.cpSync(backupPath, savePath, { recursive: true })
-      return { success: true }
-    } catch (err: any) { return { success: false, error: err.message } }
-  })
-
-  ipcMain.handle('saves:delete-backup', (_event, backupPath: string) => {
-    try {
-      if (fs.existsSync(backupPath)) fs.rmSync(backupPath, { recursive: true, force: true })
-      return { success: true }
-    } catch (err: any) { return { success: false, error: err.message } }
   })
 
   // servers
@@ -700,6 +619,7 @@ app.whenReady().then(() => {
   javaService = new JavaService()
   newsService = new NewsService()
   logsService = new LogsService(dataDir)
+  playtimeService = new PlaytimeService(dataDir)
 
   logsService.add('info', 'Launcher starting', 'main')
   setupIPCHandlers()

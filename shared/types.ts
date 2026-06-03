@@ -166,21 +166,6 @@ export interface NewsItem {
   pubDate: string
 }
 
-export type SaveEntry = {
-  name: string
-  path: string
-  lastPlayed: number
-  size: string
-  icon?: string
-}
-
-export type BackupEntry = {
-  name: string
-  path: string
-  date: number
-  size: string
-}
-
 export interface ServerEntry {
   id: string
   name: string
@@ -219,6 +204,21 @@ export type ScreenshotEntry = {
   path: string
   time: number
   size: number
+}
+
+export interface PlaySession {
+  accountId: string
+  accountName: string
+  versionId: string
+  startTime: number
+  duration: number
+}
+
+export interface PlaytimeData {
+  totalPlayed: number
+  byVersion: Record<string, { count: number; totalDuration: number }>
+  byAccount: Record<string, { count: number; totalDuration: number; lastPlayed: number }>
+  lastSessions: PlaySession[]
 }
 
 export type ClientStatus = {

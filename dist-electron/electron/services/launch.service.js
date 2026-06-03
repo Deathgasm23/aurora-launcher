@@ -97,8 +97,13 @@ class LaunchService extends events_1.EventEmitter {
                     shell: false,
                     windowsHide: false,
                 });
+                let started = false;
                 this.process.stdout?.on('data', (data) => {
                     this.emit('output', data.toString());
+                    if (!started) {
+                        started = true;
+                        resolve();
+                    }
                 });
                 this.process.stderr?.on('data', (data) => {
                     this.emit('output', data.toString());
@@ -110,11 +115,19 @@ class LaunchService extends events_1.EventEmitter {
                 this.process.on('exit', (code) => {
                     this.emit('exit', code !== null ? code : -1);
                     this.process = null;
-                    if (code === 0)
-                        resolve();
-                    else
-                        reject(new Error(`Game exited with code ${code}`));
+                    if (!started) {
+                        started = true;
+                        if (code === 0)
+                            resolve();
+                        else
+                            reject(new Error(`Game exited with code ${code}`));
+                    }
                 });
+                // resolve after a short delay if no output yet (e.g. headless / slow JVM)
+                setTimeout(() => { if (!started) {
+                    started = true;
+                    resolve();
+                } }, 3000);
             }
             catch (err) {
                 reject(new Error(`Failed to start process: ${err.message}`));
@@ -355,7 +368,7 @@ class LaunchService extends events_1.EventEmitter {
             .replace('${resolution_width}', settings.width.toString())
             .replace('${resolution_height}', settings.height.toString())
             .replace('${launcher_name}', 'aurora-launcher')
-            .replace('${launcher_version}', '1.2.5')
+            .replace('${launcher_version}', '1.2.7')
             .replace('${classpath}', '')
             .replace('${library_directory}', path.join(mcDir, 'libraries'))
             .replace('${natives_directory}', path.join(mcDir, 'natives'))

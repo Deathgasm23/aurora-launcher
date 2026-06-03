@@ -1,10 +1,18 @@
 import { useState, useEffect } from 'react'
-import { UserPlus, Trash2, Star, User } from 'lucide-react'
-import type { MinecraftAccount } from '../../shared/types'
+import { UserPlus, Trash2, Star, User, Clock, History } from 'lucide-react'
+import type { MinecraftAccount, PlaytimeData } from '../../shared/types'
 import Notification from '../components/common/Notification'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 import ConfirmDialog from '../components/common/ConfirmDialog'
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (h > 0) return `${h}h ${m}m`
+  if (m > 0) return `${m}m`
+  return `${seconds}s`
+}
 
 interface AccountsProps {
   onAccountsChanged: () => void
@@ -19,20 +27,32 @@ function Accounts({ onAccountsChanged }: AccountsProps) {
   const [pageLoading, setPageLoading] = useState(true)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [notif, setNotif] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
+  const [playtime, setPlaytime] = useState<PlaytimeData | null>(null)
 
   async function loadAccounts() {
     try {
-      const accs = await window.electronAPI.auth.getAccounts()
+      const [accs, current, pt] = await Promise.all([
+        window.electronAPI.auth.getAccounts(),
+        window.electronAPI.auth.getCurrentAccount(),
+        window.electronAPI.playtime.getStats().catch(() => null),
+      ])
       setAccounts(accs)
-      const current = await window.electronAPI.auth.getCurrentAccount()
       setCurrentAccountId(current?.id || null)
+      if (pt) setPlaytime(pt)
     } catch {
       setNotif({ message: 'Failed to load accounts', type: 'error' })
     }
     setPageLoading(false)
   }
 
-  useEffect(() => { loadAccounts() }, [])
+  useEffect(() => {
+    loadAccounts()
+    const onExit = () => {
+      window.electronAPI.playtime.getStats().then(setPlaytime).catch(() => {})
+    }
+    window.electronAPI.onLaunchExit(onExit)
+    return () => window.electronAPI.removeLaunchExitListener()
+  }, [])
 
   async function handleOfflineLogin() {
     if (!offlineUsername.trim()) return
@@ -113,6 +133,14 @@ function Accounts({ onAccountsChanged }: AccountsProps) {
                   Offline Account
                   {acc.uuid && ` · ${acc.uuid.slice(0, 8)}...`}
                 </div>
+                {playtime?.byAccount[acc.id] && (
+                  <div className="account-playtime">
+                    <Clock size={11} />
+                    <span>{formatDuration(playtime.byAccount[acc.id].totalDuration)}</span>
+                    <span style={{ opacity: 0.5 }}>·</span>
+                    <span>{playtime.byAccount[acc.id].count} sessions</span>
+                  </div>
+                )}
               </div>
               {acc.id === currentAccountId && (
                 <Star size={14} style={{ color: 'var(--warning)' }} />

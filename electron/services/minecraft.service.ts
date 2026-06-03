@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
+import * as https from 'https'
 import { EventEmitter } from 'events'
 import {
   VersionManifest,
@@ -12,10 +13,18 @@ import {
 
 const VERSION_MANIFEST_URL = 'https://launchermeta.mojang.com/mc/game/version_manifest.json'
 
+const HTTP_AGENT = new https.Agent({ keepAlive: true, maxSockets: 64, keepAliveMsecs: 30000 })
+
 let _fetch: any = null
 async function getFetch() {
   if (!_fetch) _fetch = (await import('node-fetch')).default
   return _fetch
+}
+
+async function fetchBuffer(url: string): Promise<Buffer> {
+  const response = await (await getFetch())(url, { agent: HTTP_AGENT })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return Buffer.from(await response.arrayBuffer())
 }
 
 export class MinecraftService extends EventEmitter {
@@ -42,7 +51,7 @@ export class MinecraftService extends EventEmitter {
   }
 
   async fetchManifest(): Promise<VersionManifest> {
-    const response = await (await getFetch())(VERSION_MANIFEST_URL)
+    const response = await (await getFetch())(VERSION_MANIFEST_URL, { agent: HTTP_AGENT })
     if (!response.ok) throw new Error(`Failed to fetch version manifest: ${response.status}`)
     const data: any = await response.json()
     this.manifest = {
@@ -65,7 +74,7 @@ export class MinecraftService extends EventEmitter {
   }
 
   async checkForNewVersions(): Promise<string[]> {
-    const response = await (await getFetch())(VERSION_MANIFEST_URL)
+    const response = await (await getFetch())(VERSION_MANIFEST_URL, { agent: HTTP_AGENT })
     if (!response.ok) throw new Error(`Failed to fetch manifest: ${response.status}`)
     const data: any = await response.json()
 
@@ -100,7 +109,7 @@ export class MinecraftService extends EventEmitter {
     const version = this.manifest!.versions.find(v => v.id === versionId)
     if (!version) throw new Error(`Version ${versionId} not found in manifest`)
 
-    const response = await (await getFetch())(version.url)
+    const response = await (await getFetch())(version.url, { agent: HTTP_AGENT })
     if (!response.ok) throw new Error(`Failed to fetch version JSON: ${response.status}`)
     return response.json()
   }
@@ -200,9 +209,7 @@ export class MinecraftService extends EventEmitter {
 
     for (let attempt = 0; attempt < retries; attempt++) {
       try {
-        const response = await (await getFetch())(url)
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const buffer = Buffer.from(await response.arrayBuffer())
+        const buffer = await fetchBuffer(url)
         if (expectedSha1) {
           const hash = crypto.createHash('sha1').update(buffer).digest('hex')
           if (hash !== expectedSha1) {
@@ -280,7 +287,7 @@ export class MinecraftService extends EventEmitter {
     const baseUrl = 'https://resources.download.minecraft.net'
     const total = entries.length
     let done = 0, skipped = 0
-    const concurrency = 20
+    const concurrency = 64
 
     const emitProgress = () => {
       const pct = total > 0 ? Math.round((done + skipped) / total * 100) : 100
@@ -333,7 +340,7 @@ export class MinecraftService extends EventEmitter {
       }
     }
 
-    const concurrency = 20
+    const concurrency = 32
     const total = downloads.length
     let done = 0
 

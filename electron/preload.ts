@@ -101,14 +101,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onDownloaded: (callback: (info: any) => void) => { ipcRenderer.on('update:downloaded', (_event, info) => callback(info)) },
     onError: (callback: (message: string) => void) => { ipcRenderer.on('update:error', (_event, message) => callback(message)) },
   },
-  saves: {
-    list: () => ipcRenderer.invoke('saves:list'),
-    backup: (saveName: string) => ipcRenderer.invoke('saves:backup', saveName),
-    listBackups: (saveName: string) => ipcRenderer.invoke('saves:list-backups', saveName),
-    restore: (backupName: string, originalName: string) =>
-      ipcRenderer.invoke('saves:restore', backupName, originalName),
-    deleteBackup: (backupPath: string) => ipcRenderer.invoke('saves:delete-backup', backupPath),
-  },
   servers: {
     list: () => ipcRenderer.invoke('servers:list'),
     save: (servers: any[]) => ipcRenderer.invoke('servers:save', servers),
@@ -118,6 +110,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     list: () => ipcRenderer.invoke('screenshots:list'),
     open: () => ipcRenderer.invoke('screenshots:open'),
   },
+  playtime: {
+    getStats: () => ipcRenderer.invoke('playtime:stats'),
+  },
+
   crashReports: {
     list: () => ipcRenderer.invoke('crash-reports:list'),
     get: (filePath: string) => ipcRenderer.invoke('crash-reports:get', filePath),
