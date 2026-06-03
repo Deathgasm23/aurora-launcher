@@ -2,7 +2,7 @@ const fs = require('fs')
 const path = require('path')
 
 const releaseDir = path.join(__dirname, '..', process.env.RELEASE_DIR || 'release-build')
-const keep = process.env.KEEP || '.exe,.AppImage,.dmg'
+const keep = process.env.KEEP || '.exe,.AppImage,.dmg,.yml'
 
 const keepExts = keep.split(',').map(s => s.trim().toLowerCase())
 

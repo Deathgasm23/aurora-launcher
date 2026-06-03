@@ -15,7 +15,8 @@ jobs:
       - run: npm run package:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: aurora-windows
-          path: release-build/
+      - name: Create Release
+        run: |
+          gh release create ${{ github.ref_name }} release-build/* --title "${{ github.ref_name }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
