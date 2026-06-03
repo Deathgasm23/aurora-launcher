@@ -12,7 +12,6 @@ A modern, custom Minecraft launcher built with Electron, React, and TypeScript.
 - **Dark Theme** — Modern dark UI inspired by Prism Launcher
 - **Encrypted Storage** — Auth tokens encrypted with AES-256-GCM
 - **Multiple Accounts** — Add and switch between offline accounts
-- **Minecraft News** — Fetches latest news from Mojang
 - **Logging System** — Built-in debug log viewer with real-time game output
 
 ## Prerequisites
