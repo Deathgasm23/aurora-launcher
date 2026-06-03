@@ -357,7 +357,7 @@ export class LaunchService extends EventEmitter {
       .replace('${resolution_width}', settings.width.toString())
       .replace('${resolution_height}', settings.height.toString())
       .replace('${launcher_name}', 'aurora-launcher')
-      .replace('${launcher_version}', '1.2.7')
+      .replace('${launcher_version}', '1.2.8')
       .replace('${classpath}', '')
       .replace('${library_directory}', path.join(mcDir, 'libraries'))
       .replace('${natives_directory}', path.join(mcDir, 'natives'))

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Home, Users, Package, Settings, ScrollText, Gem, Zap, Server, AlertTriangle } from 'lucide-react'
+import { Home, Users, Package, Settings, ScrollText, Gem, Zap, Server, AlertTriangle, Image, ExternalLink } from 'lucide-react'
 
 interface NavbarProps {
   activePage: string
@@ -12,7 +12,7 @@ const navItems = [
   { id: 'home', label: 'Home', icon: Home },
   { id: 'accounts', label: 'Accounts', icon: Users },
   { id: 'versions', label: 'Versions', icon: Package },
-
+  { id: 'screenshots', label: 'Screenshots', icon: Image },
   { id: 'servers', label: 'Servers', icon: Server },
   { id: 'crash-reports', label: 'Crashes', icon: AlertTriangle },
   { id: 'logs', label: 'Logs', icon: ScrollText },
@@ -53,7 +53,11 @@ export default function Sidebar({ activePage, onNavigate, newVersionsCount, onNe
       </nav>
       <div className="navbar-meta">
         <Zap size={12} />
-        <span>v{appVersion || '1.2.7'}</span>
+        <span>v{appVersion || '1.2.8'}</span>
+        <button className="navbar-github-link" onClick={() => window.electronAPI.shell.openExternal('https://github.com/Deathgasm23/aurora-launcher')} title="GitHub">
+          <ExternalLink size={11} />
+          <span>GitHub</span>
+        </button>
       </div>
     </div>
   )

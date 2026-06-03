@@ -10,6 +10,7 @@ import Settings from './pages/Settings'
 import Logs from './pages/Logs'
 
 import ServersPage from './pages/ServersPage'
+import Screenshots from './pages/Screenshots'
 import CrashReports from './pages/CrashReports'
 
 export default function App() {
@@ -111,6 +112,7 @@ export default function App() {
         const pageMap: Record<string, string> = {
           '1': 'home', '2': 'accounts', '3': 'versions',
           '4': 'settings', '5': 'logs', '6': 'servers',
+          '8': 'screenshots',
         }
         if (e.key === '-') { e.preventDefault(); setActivePage('crash-reports'); return }
         const page = pageMap[e.key]
@@ -180,6 +182,8 @@ export default function App() {
         return <Logs />
       case 'servers':
         return <ServersPage currentAccount={currentAccount} />
+      case 'screenshots':
+        return <Screenshots />
       case 'crash-reports':
         return <CrashReports />
       default:
@@ -229,8 +233,8 @@ export default function App() {
         <div className="update-bar">
           {updateInfo.status === 'available' && (
             <><Download size={14} /> Update <strong>v{updateInfo.version}</strong> available
-              <button className="btn btn-primary btn-xs" style={{ marginLeft: 'auto' }} onClick={async () => {
-                await window.electronAPI.update.download()
+              <button className="btn btn-primary btn-xs" style={{ marginLeft: 'auto' }} onClick={() => {
+                window.electronAPI.shell.openExternal('https://github.com/Deathgasm23/aurora-launcher/releases')
               }}>Download</button>
               <button className="btn btn-ghost btn-xs" onClick={() => setUpdateInfo(null)}><X size={12} /></button>
             </>
