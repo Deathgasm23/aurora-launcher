@@ -15,6 +15,19 @@ jobs:
       - run: npm run package:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate latest.yml
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem release-build/*.exe | Select-Object -First 1
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA512).Hash.ToLower()
+          $date = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+          $tag = "${{ github.ref_name }}" -replace '^v'
+          @"
+          version: $tag
+          path: $($exe.Name)
+          sha512: $hash
+          releaseDate: $date
+          "@ | Out-File -FilePath release-build/latest.yml -Encoding ASCII
       - name: Delete existing release if any
         continue-on-error: true
         run: gh release delete ${{ github.ref_name }} --yes
