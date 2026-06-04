@@ -41,8 +41,6 @@ npm run package
 
 # Package for specific platforms
 npm run package:win     # Windows (.exe)
-npm run package:linux   # Linux (.AppImage)
-npm run package:mac     # macOS (.dmg)
 ```
 
 ## Auto-Update
@@ -94,4 +92,3 @@ const REPO_NAME = 'aurora-launcher'
 ## Configuration
 
 Settings are stored in `%APPDATA%/aurora-launcher/settings.json` (Windows)
-or `~/.config/aurora-launcher/settings.json` (Linux/macOS).
