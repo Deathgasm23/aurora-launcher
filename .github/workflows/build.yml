@@ -16,6 +16,11 @@ jobs:
       - run: npm run package:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: aurora-launcher-${{ github.sha }}
+          path: release-build/
       - name: Generate latest.yml
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
