@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { AlertTriangle, FileText, Trash2, RefreshCw } from 'lucide-react'
 import type { CrashReport } from '../../shared/types'
 import Notification from '../components/common/Notification'
+import ConfirmDialog from '../components/common/ConfirmDialog'
 
 function CrashReports() {
   const [reports, setReports] = useState<CrashReport[]>([])
@@ -9,6 +10,7 @@ function CrashReports() {
   const [notif, setNotif] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [selected, setSelected] = useState<CrashReport | null>(null)
   const [content, setContent] = useState('')
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
 
   async function loadReports() {
     try {
@@ -26,12 +28,46 @@ function CrashReports() {
     setContent(result.content)
   }
 
+  async function handleDelete(filePath: string) {
+    await window.electronAPI.crashReports.delete(filePath)
+    setReports(prev => prev.filter(r => r.path !== filePath))
+    if (selected?.path === filePath) { setSelected(null); setContent('') }
+    setNotif({ message: 'Crash report deleted', type: 'success' })
+  }
+
+  async function handleDeleteAll() {
+    setConfirmDeleteAll(false)
+    await window.electronAPI.crashReports.deleteAll()
+    setReports([])
+    setSelected(null)
+    setContent('')
+    setNotif({ message: 'All crash reports deleted', type: 'success' })
+  }
+
   return (
     <div className="page-container">
+      <ConfirmDialog
+        open={confirmDeleteAll}
+        title="Delete All Crash Reports"
+        message="This will permanently delete all crash report files. This cannot be undone."
+        confirmLabel="Delete All"
+        danger
+        onConfirm={handleDeleteAll}
+        onCancel={() => setConfirmDeleteAll(false)}
+      />
       {notif && <Notification {...notif} onClose={() => setNotif(null)} />}
       <div className="page-header">
-        <h1 className="page-title">Crash Reports</h1>
-        <p className="page-subtitle">View and analyze game crash logs</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="page-title">Crash Reports</h1>
+            <p className="page-subtitle">View and analyze game crash logs</p>
+          </div>
+          {reports.length > 0 && (
+            <button className="btn btn-danger btn-sm" onClick={() => setConfirmDeleteAll(true)}>
+              <Trash2 size={14} /> Delete All
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -52,11 +88,18 @@ function CrashReports() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {reports.map(r => (
                 <div key={r.title} className={`version-card ${selected?.title === r.title ? 'active' : ''}`}
-                  onClick={() => handleSelect(r)} style={{ cursor: 'pointer' }}>
-                  <div className="version-info">
+                  onClick={() => handleSelect(r)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <div className="version-info" style={{ flex: 1, minWidth: 0 }} onClick={() => handleSelect(r)}>
                     <div className="version-name" style={{ fontSize: 12 }}>{r.title}</div>
                     <div className="version-date">{new Date(r.time).toLocaleString()}</div>
                   </div>
+                  <button
+                    className="crash-delete-btn"
+                    onClick={e => { e.stopPropagation(); handleDelete(r.path) }}
+                    title="Delete this report"
+                  >
+                    <Trash2 size={10} />
+                  </button>
                 </div>
               ))}
             </div>

@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, clipboard } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import { autoUpdater } from 'electron-updater'
 
 app.name = 'Aurora Launcher'
+app.setAppUserModelId('AuroraLauncher')
 import { AuthService } from './services/auth.service'
 import { MinecraftService } from './services/minecraft.service'
 import { LaunchService } from './services/launch.service'
@@ -16,6 +17,22 @@ import { PlaytimeService } from './services/playtime.service'
 const REPO_OWNER = 'Deathgasm23'
 const REPO_NAME = 'aurora-launcher'
 
+function getDataDir(): string {
+  return path.join(app.getPath('appData'), 'Aurora Launcher', 'aurora-data')
+}
+
+function migrateOldDataDir(): void {
+  const oldDir = path.join(app.getPath('appData'), 'aurora-launcher', 'aurora-data')
+  const newDir = getDataDir()
+  if (!fs.existsSync(oldDir) || oldDir === newDir) return
+  if (fs.existsSync(newDir)) return
+  try {
+    const parent = path.dirname(newDir)
+    if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true })
+    fs.renameSync(oldDir, newDir)
+  } catch {}
+}
+
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
@@ -27,6 +44,32 @@ let javaService: JavaService
 let newsService: NewsService
 let logsService: LogsService
 let playtimeService: PlaytimeService
+
+function ensureLauncherProfiles(mcDir: string): void {
+  const profilePath = path.join(mcDir, 'launcher_profiles.json')
+  if (!fs.existsSync(profilePath)) {
+    fs.mkdirSync(mcDir, { recursive: true })
+    fs.writeFileSync(profilePath, JSON.stringify({
+      profiles: {},
+      selectedProfile: '(Default)',
+      clientToken: '00000000-0000-0000-0000-000000000000',
+      launcherVersion: { name: '1.0', format: 0 },
+    }, null, 2), 'utf-8')
+  }
+}
+
+function getDirSize(dirPath: string): number {
+  try {
+    let total = 0
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    for (const e of entries) {
+      const p = path.join(dirPath, e.name)
+      if (e.isDirectory()) total += getDirSize(p)
+      else total += fs.statSync(p).size
+    }
+    return total
+  } catch { return 0 }
+}
 
 function writeVarInt(value: number, buf: Buffer, offset: number): number {
   while (true) {
@@ -177,19 +220,91 @@ function setupTray(): void {
   const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
   tray = new Tray(icon)
   tray.setToolTip('Aurora Launcher')
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Show Aurora Launcher', click: () => { mainWindow?.show(); mainWindow?.focus() } },
-    { type: 'separator' },
-    { label: 'Quit', click: () => { isQuitting = true; app.quit() } },
-  ]))
+  updateTrayMenu()
   tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus() })
 }
 
+function updateTrayMenu(): void {
+  if (!tray) return
+  const settings = settingsService?.get()
+  const lastVersion = settings?.lastVersion
+  const account = authService?.getCurrentAccount()
+  const items: Electron.MenuItemConstructorOptions[] = [
+    { label: 'Show Aurora Launcher', click: () => { mainWindow?.show(); mainWindow?.focus() } },
+    { type: 'separator' },
+  ]
+  if (lastVersion && account) {
+    items.push({
+      label: `Launch ${lastVersion} (${account.username})`,
+      click: async () => {
+        try {
+          const manifest = minecraftService.getManifestCached()
+          const version = manifest?.versions.find(v => v.id === lastVersion)
+          if (!version) return
+          const versionJson = await minecraftService.fetchVersionJson(lastVersion)
+          const s = settingsService.get()
+          logsService.clear()
+          logsService.add('info', `Launching Minecraft ${lastVersion} from tray...`, 'main')
+          const launchStart = Date.now()
+          launchService.on('output', (data: string) => {
+            logsService.add('info', data.trimEnd(), 'game')
+            mainWindow?.webContents.send('launch:output', data)
+          })
+          launchService.on('error', (data: string) => {
+            logsService.add('error', data.trimEnd(), 'game')
+            mainWindow?.webContents.send('launch:error', data)
+          })
+          launchService.on('exit', (code: number) => {
+            const duration = Date.now() - launchStart
+            playtimeService.recordSession(account.id, account.username, lastVersion, launchStart, duration)
+            logsService.add('info', `Game exited with code ${code} (played ${Math.round(duration / 1000)}s)`, 'game')
+            mainWindow?.webContents.send('launch:exit', code)
+            mainWindow?.show()
+            mainWindow?.focus()
+          })
+          mainWindow?.hide()
+          await launchService.launchGame({ account, version, settings: s, versionJson })
+        } catch (err: any) {
+          logsService.add('error', `Tray launch failed: ${err.message}`, 'main')
+          mainWindow?.webContents.send('launch:exit', -1)
+          mainWindow?.show()
+        }
+      },
+    })
+    items.push({ type: 'separator' })
+  }
+  items.push({ label: 'Quit', click: () => { isQuitting = true; app.quit() } })
+  tray.setContextMenu(Menu.buildFromTemplate(items))
+}
+
+function getWindowStatePath(): string {
+  return path.join(getDataDir(), 'window-state.json')
+}
+
+function loadWindowState(): { x?: number; y?: number; width: number; height: number } {
+  try {
+    const p = getWindowStatePath()
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf-8'))
+  } catch {}
+  return { width: 1280, height: 800 }
+}
+
+function saveWindowState(): void {
+  if (!mainWindow) return
+  try {
+    const bounds = mainWindow.getBounds()
+    fs.writeFileSync(getWindowStatePath(), JSON.stringify({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }), 'utf-8')
+  } catch {}
+}
+
 function createWindow(): void {
+  const winState = loadWindowState()
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 750,
-    minWidth: 900,
+    x: winState.x,
+    y: winState.y,
+    width: winState.width,
+    height: winState.height,
+    minWidth: 1100,
     minHeight: 600,
     frame: false,
     titleBarStyle: 'hidden',
@@ -212,7 +327,11 @@ function createWindow(): void {
 
   mainWindow.once('ready-to-show', () => mainWindow?.show())
 
+  mainWindow.on('resize', saveWindowState)
+  mainWindow.on('move', saveWindowState)
+
   mainWindow.on('close', (event) => {
+    saveWindowState()
     if (!isQuitting) {
       event.preventDefault()
       mainWindow?.hide()
@@ -228,11 +347,14 @@ function createWindow(): void {
 function setupIPCHandlers(): void {
   // auth
   ipcMain.handle('auth:login-offline', (_event, username: string) => {
-    return authService.loginOffline(username)
+    const result = authService.loginOffline(username)
+    updateTrayMenu()
+    return result
   })
 
   ipcMain.handle('auth:logout', (_event, accountId: string) => {
     authService.removeAccount(accountId)
+    updateTrayMenu()
   })
 
   ipcMain.handle('auth:get-accounts', () => {
@@ -241,15 +363,22 @@ function setupIPCHandlers(): void {
 
   ipcMain.handle('auth:set-current', (_event, accountId: string) => {
     authService.setCurrentAccount(accountId)
+    updateTrayMenu()
   })
 
   ipcMain.handle('auth:get-current', () => {
     return authService.getCurrentAccount()
   })
 
+
+
   // versions
   ipcMain.handle('versions:get-manifest', () => {
     return minecraftService.fetchManifest()
+  })
+
+  ipcMain.handle('versions:refresh', () => {
+    return minecraftService.refreshInstalled()
   })
 
   ipcMain.handle('versions:get-json', (_event, versionId: string) => {
@@ -322,6 +451,8 @@ function setupIPCHandlers(): void {
         playtimeService.recordSession(account.id, account.username, versionId, launchStart, duration)
         logsService.add('info', `Game exited with code ${code} (played ${Math.round(duration / 1000)}s)`, 'game')
         mainWindow?.webContents.send('launch:exit', code)
+        mainWindow?.show()
+        mainWindow?.focus()
       })
 
       mainWindow?.hide()
@@ -374,6 +505,8 @@ function setupIPCHandlers(): void {
         playtimeService.recordSession(account.id, account.username, versionId, launchStart, duration)
         logsService.add('info', `Game exited with code ${code} (played ${Math.round(duration / 1000)}s)`, 'game')
         mainWindow?.webContents.send('launch:exit', code)
+        mainWindow?.show()
+        mainWindow?.focus()
       })
       mainWindow?.hide()
       await launchService.launchGame({ account, version, settings, versionJson, extras })
@@ -386,7 +519,14 @@ function setupIPCHandlers(): void {
   ipcMain.handle('playtime:stats', () => playtimeService.getStats())
 
   ipcMain.handle('settings:get', () => settingsService.get())
-  ipcMain.handle('settings:set', (_event, newSettings: any) => settingsService.update(newSettings))
+  ipcMain.handle('settings:set', (_event, newSettings: any) => {
+    const result = settingsService.update(newSettings)
+    if (newSettings?.minecraftDirectory) {
+      ensureLauncherProfiles(newSettings.minecraftDirectory)
+    }
+    updateTrayMenu()
+    return result
+  })
   ipcMain.handle('settings:get-default', () => settingsService.getDefaults())
   ipcMain.handle('settings:get-path', () => settingsService.getSettingsPath())
 
@@ -439,18 +579,61 @@ function setupIPCHandlers(): void {
   })
 
   ipcMain.handle('news:get', () => {
+    const cached = newsService.getCached()
+    if (cached) {
+      newsService.fetchNews()
+      return cached
+    }
     return newsService.fetchNews()
+  })
+
+  newsService.onRefresh((items) => {
+    mainWindow?.webContents.send('news:updated', items)
   })
 
   ipcMain.handle('logs:get', () => logsService.getLogs())
   ipcMain.handle('logs:clear', () => logsService.clear())
+  ipcMain.handle('logs:delete-entry', (_event, index: number) => logsService.deleteEntry(index))
+  ipcMain.handle('logs:delete-all-files', () => logsService.deleteAllFiles())
 
   ipcMain.handle('shell:open-path', (_event, filePath: string) => {
     shell.openPath(filePath)
   })
 
+  ipcMain.handle('shell:open-settings-folder', async () => {
+    const p = app.getPath('userData')
+    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true })
+    await shell.openPath(p)
+  })
+
   ipcMain.handle('shell:open-external', (_event, url: string) => {
-    shell.openExternal(url)
+    return shell.openExternal(url)
+  })
+
+  ipcMain.handle('dialog:read-text-file', async () => {
+    const { dialog } = require('electron')
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openFile'],
+      filters: [{ name: 'Text Files', extensions: ['txt'] }],
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return fs.readFileSync(result.filePaths[0], 'utf-8')
+  })
+
+  ipcMain.handle('dialog:write-text-file', async (_event, content: string, defaultName?: string) => {
+    const { dialog } = require('electron')
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Export Servers',
+      defaultPath: defaultName || 'servers.txt',
+      filters: [{ name: 'Text Files', extensions: ['txt'] }],
+    })
+    if (result.canceled || !result.filePath) return { success: false }
+    try {
+      fs.writeFileSync(result.filePath, content, 'utf-8')
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
   })
 
   // window controls
@@ -471,7 +654,7 @@ function setupIPCHandlers(): void {
 
   // servers
   ipcMain.handle('servers:list', () => {
-    const dataDir = app.isPackaged ? path.join(path.dirname(app.getPath('exe')), 'data') : app.getPath('userData')
+    const dataDir = getDataDir()
     try {
       const serversPath = path.join(dataDir, 'servers.json')
       if (fs.existsSync(serversPath)) return JSON.parse(fs.readFileSync(serversPath, 'utf-8'))
@@ -480,7 +663,7 @@ function setupIPCHandlers(): void {
   })
 
   ipcMain.handle('servers:save', (_event, servers: any[]) => {
-    const dataDir = app.isPackaged ? path.join(path.dirname(app.getPath('exe')), 'data') : app.getPath('userData')
+    const dataDir = getDataDir()
     try {
       fs.writeFileSync(path.join(dataDir, 'servers.json'), JSON.stringify(servers, null, 2), 'utf-8')
       return { success: true }
@@ -517,6 +700,55 @@ function setupIPCHandlers(): void {
     shell.openPath(ssDir)
   })
 
+  ipcMain.handle('screenshots:delete', (_event, filePath: string) => {
+    try {
+      fs.unlinkSync(filePath)
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('shell:show-item', (_event, filePath: string) => {
+    shell.showItemInFolder(filePath)
+  })
+
+  ipcMain.handle('screenshots:copy-image', (_event, filePath: string) => {
+    try {
+      const img = nativeImage.createFromPath(filePath)
+      if (img.isEmpty()) return { success: false, error: 'Failed to read image' }
+      clipboard.writeImage(img)
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('screenshots:upload-imgur', async (_event, filePath: string) => {
+    try {
+      const imgurClientId = settingsService.get().imgurClientId
+      if (!imgurClientId) {
+        return { success: false, error: 'Imgur Client-ID not set. Add yours in Settings > Integrations.' }
+      }
+      const image = fs.readFileSync(filePath)
+      const b64 = image.toString('base64')
+      const fetch = (await import('node-fetch')).default
+      const res = await fetch('https://api.imgur.com/3/image', {
+        method: 'POST',
+        headers: {
+          Authorization: `Client-ID ${imgurClientId}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `image=${encodeURIComponent(b64)}&type=base64`,
+      })
+      const text = await res.text()
+      let data: any
+      try { data = JSON.parse(text) } catch { return { success: false, error: `Imgur returned non-JSON (HTTP ${res.status})` } }
+      if (data.success) {
+        return { success: true, url: data.data.link }
+      }
+      return { success: false, error: data.data?.error || 'Upload failed' }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
   // crash reports
   ipcMain.handle('crash-reports:list', () => {
     const mcDir = settingsService.get().minecraftDirectory
@@ -537,6 +769,288 @@ function setupIPCHandlers(): void {
       if (fs.existsSync(filePath)) return { content: fs.readFileSync(filePath, 'utf-8') }
       return { content: '' }
     } catch { return { content: '' } }
+  })
+
+  ipcMain.handle('crash-reports:delete', (_event, filePath: string) => {
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+      return true
+    } catch { return false }
+  })
+
+  ipcMain.handle('crash-reports:delete-all', () => {
+    try {
+      const mcDir = settingsService.get().minecraftDirectory
+      const crDir = path.join(mcDir, 'crash-reports')
+      if (fs.existsSync(crDir)) {
+        const entries = fs.readdirSync(crDir)
+        for (const entry of entries) fs.unlinkSync(path.join(crDir, entry))
+      }
+      return true
+    } catch { return false }
+  })
+
+  // worlds
+  ipcMain.handle('worlds:list', () => {
+    try {
+      const mcDir = settingsService.get().minecraftDirectory
+      const savesDir = path.join(mcDir, 'saves')
+      if (!fs.existsSync(savesDir)) return []
+      const entries = fs.readdirSync(savesDir, { withFileTypes: true })
+      return entries.filter(e => e.isDirectory()).map(e => {
+        const levelPath = path.join(savesDir, e.name, 'level.dat')
+        const stats = fs.statSync(path.join(savesDir, e.name))
+        return {
+          name: e.name,
+          path: path.join(savesDir, e.name),
+          lastPlayed: stats.mtimeMs,
+          size: getDirSize(path.join(savesDir, e.name)),
+          hasLevelDat: fs.existsSync(levelPath),
+        }
+      }).sort((a, b) => b.lastPlayed - a.lastPlayed)
+    } catch { return [] }
+  })
+
+  ipcMain.handle('worlds:backup', (_event, worldName: string) => {
+    try {
+      const mcDir = settingsService.get().minecraftDirectory
+      const savesDir = path.join(mcDir, 'saves')
+      const dataDir = getDataDir()
+      const backupsDir = path.join(dataDir, 'world-backups')
+      if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true })
+      const worldPath = path.join(savesDir, worldName)
+      if (!fs.existsSync(worldPath)) return { success: false, error: 'World not found' }
+      const sanitized = worldName.replace(/[^a-zA-Z0-9_\- ]/g, '_')
+      const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const zipPath = path.join(backupsDir, `${sanitized}_${dateStr}.zip`)
+      const archiver = require('archiver')
+      return new Promise((resolve) => {
+        const output = fs.createWriteStream(zipPath)
+        const archive = archiver('zip', { zlib: { level: 9 } })
+        output.on('close', () => resolve({ success: true, path: zipPath, size: archive.pointer() }))
+        archive.on('error', (err: any) => resolve({ success: false, error: err.message }))
+        archive.pipe(output)
+        archive.directory(worldPath, worldName)
+        archive.finalize()
+      })
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('worlds:list-backups', () => {
+    try {
+      const dataDir = getDataDir()
+      const backupsDir = path.join(dataDir, 'world-backups')
+      if (!fs.existsSync(backupsDir)) return []
+      const entries = fs.readdirSync(backupsDir, { withFileTypes: true })
+      return entries.filter(e => e.isFile() && e.name.endsWith('.zip')).map(e => {
+        const p = path.join(backupsDir, e.name)
+        const stats = fs.statSync(p)
+        const parts = e.name.replace('.zip', '').split('_')
+        const worldName = parts.slice(0, -3).join('_') || e.name
+        return { name: e.name, path: p, size: stats.size, time: stats.mtimeMs, worldName }
+      }).sort((a, b) => b.time - a.time)
+    } catch { return [] }
+  })
+
+  ipcMain.handle('worlds:restore', (_event, backupPath: string) => {
+    try {
+      const mcDir = settingsService.get().minecraftDirectory
+      const savesDir = path.join(mcDir, 'saves')
+      if (!fs.existsSync(savesDir)) fs.mkdirSync(savesDir, { recursive: true })
+      const extract = require('extract-zip')
+      return extract(backupPath, { dir: savesDir })
+        .then(() => ({ success: true }))
+        .catch((err: any) => ({ success: false, error: err.message }))
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('worlds:delete-backup', (_event, backupPath: string) => {
+    try {
+      if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath)
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // resource packs
+  ipcMain.handle('resource-packs:list', () => {
+    try {
+      const mcDir = settingsService.get().minecraftDirectory
+      const rpDir = path.join(mcDir, 'resourcepacks')
+      if (!fs.existsSync(rpDir)) return []
+      const entries = fs.readdirSync(rpDir, { withFileTypes: true })
+      return entries.filter(e => {
+        if (e.isDirectory()) return true
+        return e.isFile() && (e.name.endsWith('.zip') || e.name.endsWith('.mcpack'))
+      }).map(e => {
+        const p = path.join(rpDir, e.name)
+        const stats = fs.statSync(p)
+        return { name: e.name, path: p, isDirectory: e.isDirectory(), size: stats.size, modified: stats.mtimeMs }
+      }).sort((a, b) => a.name.localeCompare(b.name))
+    } catch { return [] }
+  })
+
+  ipcMain.handle('resource-packs:delete', (_event, packPath: string) => {
+    try {
+      const stat = fs.statSync(packPath)
+      if (stat.isDirectory()) {
+        fs.rmSync(packPath, { recursive: true, force: true })
+      } else {
+        fs.unlinkSync(packPath)
+      }
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('resource-packs:open-folder', () => {
+    try {
+      const mcDir = settingsService.get().minecraftDirectory
+      const rpDir = path.join(mcDir, 'resourcepacks')
+      if (!fs.existsSync(rpDir)) fs.mkdirSync(rpDir, { recursive: true })
+      shell.openPath(rpDir)
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // shader packs
+  ipcMain.handle('shaderpacks:list', () => {
+    try {
+      const mcDir = settingsService.get().minecraftDirectory
+      const spDir = path.join(mcDir, 'shaderpacks')
+      if (!fs.existsSync(spDir)) return []
+      const entries = fs.readdirSync(spDir, { withFileTypes: true })
+      return entries.filter(e => {
+        if (e.isDirectory()) return true
+        return e.isFile() && (e.name.endsWith('.zip') || e.name.endsWith('.mcpack'))
+      }).map(e => {
+        const p = path.join(spDir, e.name)
+        const stats = fs.statSync(p)
+        return { name: e.name, path: p, isDirectory: e.isDirectory(), size: stats.size, modified: stats.mtimeMs }
+      }).sort((a, b) => a.name.localeCompare(b.name))
+    } catch { return [] }
+  })
+
+  ipcMain.handle('shaderpacks:delete', (_event, packPath: string) => {
+    try {
+      const stat = fs.statSync(packPath)
+      if (stat.isDirectory()) {
+        fs.rmSync(packPath, { recursive: true, force: true })
+      } else {
+        fs.unlinkSync(packPath)
+      }
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('shaderpacks:open-folder', () => {
+    try {
+      const mcDir = settingsService.get().minecraftDirectory
+      const spDir = path.join(mcDir, 'shaderpacks')
+      if (!fs.existsSync(spDir)) fs.mkdirSync(spDir, { recursive: true })
+      shell.openPath(spDir)
+      return { success: true }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  // Modrinth API
+  ipcMain.handle('modrinth:search', async (_event, query: string, projectType: string, limit: number = 20, index?: string, versions?: string[], loaders?: string[]) => {
+    try {
+      const { default: fetch } = await import('node-fetch')
+      const facets: string[][] = [[`project_type:${projectType}`]]
+      if (versions?.length) facets.push(versions.map(v => `versions:${v}`))
+      if (loaders?.length) facets.push(loaders.map(l => `categories:${l}`))
+      let url = `https://api.modrinth.com/v2/search?facets=${encodeURIComponent(JSON.stringify(facets))}&limit=${limit}`
+      if (query) url += `&query=${encodeURIComponent(query)}`
+      if (index) url += `&index=${index}`
+      const res = await fetch(url)
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
+      const data = await res.json()
+      return { success: true, hits: data.hits, total: data.total_hits }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('modrinth:versions', async (_event, projectId: string) => {
+    try {
+      const { default: fetch } = await import('node-fetch')
+      const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`)
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
+      const versions = await res.json()
+      return { success: true, versions }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('modrinth:install', async (event, projectId: string, destinationDir: string, fileName?: string) => {
+    try {
+      const { default: fetch } = await import('node-fetch')
+      const res = await fetch(`https://api.modrinth.com/v2/project/${projectId}/version`)
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
+      const versions = await res.json()
+      if (!versions || versions.length === 0) return { success: false, error: 'No versions found' }
+      const latest = versions[0]
+      const file = latest.files?.[0]
+      if (!file?.url) return { success: false, error: 'No downloadable file found' }
+      if (!fs.existsSync(destinationDir)) fs.mkdirSync(destinationDir, { recursive: true })
+      const dest = path.join(destinationDir, fileName || file.filename)
+      if (fs.existsSync(dest)) return { success: false, error: `File "${path.basename(dest)}" already exists` }
+      const fileRes = await fetch(file.url)
+      if (!fileRes.ok) return { success: false, error: `Download failed: HTTP ${fileRes.status}` }
+      const total = parseInt(fileRes.headers.get('content-length') || '0', 10)
+      let bytes = 0
+      const chunks: Buffer[] = []
+      await new Promise<void>((resolve, reject) => {
+        fileRes.body.on('data', (chunk: Buffer) => {
+          bytes += chunk.length
+          chunks.push(chunk)
+          if (total > 0) event.sender.send('modrinth:download-progress', { projectId, bytes, total })
+        })
+        fileRes.body.on('end', () => {
+          event.sender.send('modrinth:download-progress', { projectId, bytes: total || bytes, total: total || bytes })
+          resolve()
+        })
+        fileRes.body.on('error', reject)
+      })
+      fs.writeFileSync(dest, Buffer.concat(chunks))
+      return { success: true, path: dest, fileName: file.filename }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('modrinth:projects', async (_event, projectIds: string[]) => {
+    try {
+      const { default: fetch } = await import('node-fetch')
+      const url = `https://api.modrinth.com/v2/projects?ids=${encodeURIComponent(JSON.stringify(projectIds))}`
+      const res = await fetch(url)
+      if (!res.ok) return { success: false, error: `HTTP ${res.status}` }
+      const projects = await res.json()
+      return { success: true, projects }
+    } catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('cleanup:run', () => {
+    try {
+      const settings = settingsService.get()
+      const days = settings.autoCleanupDays || 30
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+      const mcDir = settings.minecraftDirectory
+      let deleted = 0
+
+      const crDir = path.join(mcDir, 'crash-reports')
+      if (fs.existsSync(crDir)) {
+        for (const entry of fs.readdirSync(crDir)) {
+          const p = path.join(crDir, entry)
+          if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); deleted++ }
+        }
+      }
+
+      if (settings.autoCleanupLogs) {
+        const logDir = path.join(mcDir, 'logs')
+        if (fs.existsSync(logDir)) {
+          for (const entry of fs.readdirSync(logDir)) {
+            const p = path.join(logDir, entry)
+            if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); deleted++ }
+          }
+        }
+      }
+      return { success: true, deleted }
+    } catch { return { success: false, deleted: 0 } }
   })
 
   // app
@@ -603,29 +1117,31 @@ function setupIPCHandlers(): void {
 }
 
 app.whenReady().then(() => {
-  const portableExe = process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe')
-  const dataDir = app.isPackaged
-    ? path.join(path.dirname(portableExe), 'data')
-    : app.getPath('userData')
-  const mcBasePath = app.isPackaged
-    ? path.join(path.dirname(portableExe), 'minecraft')
-    : path.join(app.getPath('home'), '.aurora-launcher', 'minecraft')
+  migrateOldDataDir()
+  const dataDir = getDataDir()
+
+  createWindow()
+
+  settingsService = new SettingsService(dataDir)
+  const mcBasePath = settingsService.get().minecraftDirectory
 
   authService = new AuthService(dataDir)
   minecraftService = new MinecraftService(mcBasePath)
   minecraftService.ensureDirectories()
   launchService = new LaunchService()
-  settingsService = new SettingsService(dataDir)
   javaService = new JavaService()
   newsService = new NewsService()
   logsService = new LogsService(dataDir)
   playtimeService = new PlaytimeService(dataDir)
 
+  ensureLauncherProfiles(settingsService.get().minecraftDirectory)
+
   logsService.add('info', 'Launcher starting', 'main')
   setupIPCHandlers()
   setupAutoUpdater()
   setupTray()
-  createWindow()
+
+  newsService.fetchNews()
 
   setInterval(async () => {
     try {

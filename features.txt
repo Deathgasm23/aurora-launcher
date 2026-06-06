@@ -1,0 +1,182 @@
+AURORA LAUNCHER — FEATURE LIST
+================================
+
+GENERAL
+-------
+- Electron + React + TypeScript desktop app
+- Windows-native titlebar with minimize/maximize/close buttons
+- Tray icon with quick launch for last played version
+- Command Palette (quick navigation, Ctrl+K / Cmd+K)
+- Auto-updater via electron-updater (GitHub releases)
+- Dark/light themes with steampunk aesthetic (brass, copper, leather palette)
+- First-launch welcome flow (create initial offline account)
+- News page with Mojang launchercontent API feed
+- Screenshots viewer gallery with Imgur upload
+- World/saves management with backup/restore
+- Optimized startup with lazy-loaded pages
+
+ACCOUNTS
+--------
+- Offline (username-based) account creation
+- Multiple accounts support
+- Account switching from sidebar dropdown
+- Set current account (star indicator)
+- Remove accounts
+- Playtime tracking per account (duration, session count, last played date)
+- Encrypted token storage (AES-256-GCM)
+
+VERSIONS
+--------
+- Fetch version manifest from Mojang (releases, snapshots, old versions)
+- Install any Minecraft version (downloads JAR, libraries, assets)
+- Reinstall / delete installed versions
+- Installed version indicators + progress bars during install
+- Search/filter versions by name
+- Filter by type: Release / Snapshot / Old / Custom / All
+- Custom version discovery (OptiFine/Forge/Fabric on disk auto-detected)
+- Pin favorite versions
+- Per-version notes
+- Per-version memory override
+- InheritsFrom resolution (parent JSON merge for custom versions)
+- Maven coordinate library resolution (handles OptiFine's library format)
+- Expandable game version filters (35 versions from 1.16.1 through 26.1)
+
+LAUNCHING
+---------
+- Launch any installed version with selected account
+- Auto-detect Java version, warn if too old for version requirements
+- Quick-play support: auto-connect to server or open specific world
+- Writes server to servers.dat for auto-connect
+- VM args from version JSON (JVM arguments with OS/feature rules)
+- Full classpath and natives resolution
+- Token replacement (${auth_player_name}, ${game_directory}, etc.)
+- Launch output streaming (stdout/stderr displayed in launcher)
+- Quick launch from tray icon (last version + current account)
+- Launch profiles (save memory/resolution presets)
+- Per-version Java path override
+- Optimized classpath building (cached parent resolution)
+
+SETTINGS
+--------
+- Minecraft directory picker (default: platform-standard .minecraft location)
+- Java path selector with version/architecture detection + Java test button
+- Memory allocation (min/max)
+- Extra JVM arguments
+- Extra game arguments
+- Resolution override (width/height)
+- Fullscreen toggle
+- Per-version memory settings
+- Launch profiles (named presets)
+- Settings export/import
+- Open config folder button
+- Auto-cleanup (crash reports, logs by age)
+- Collapsible settings sections with expand/collapse all
+
+SERVERS
+-------
+- Saved server list with name, address, port, version, group
+- Server ping (online/offline, MOTD, players, latency)
+- Drag-and-drop import of server list files
+- Import from file dialog
+- Export server list (address:port with name/version/group as comments)
+- Automatic deduplication on import (skips existing address:port)
+- Sort by: Default / Name / Group / Latency
+- Quick-connect "Play" button with account picker modal
+- Auto-writes to servers.dat for in-game multiplayer list
+
+SCREENSHOTS
+-----------
+- List screenshots from minecraftDirectory/screenshots
+- View screenshots (opens in default image viewer)
+- Delete screenshots
+- Upload to Imgur (with configurable client ID)
+- Copy image to clipboard
+
+WORLDS / SAVES
+--------------
+- List worlds from minecraftDirectory/saves
+- Per-world backup (ZIP via archiver)
+- Backup management (list, restore via extract-zip, delete)
+- World name, last played, file size display
+
+RESOURCE PACKS
+--------------
+- List installed resource packs from resourcepacks/ directory
+- Delete packs with confirmation dialog
+- Open resourcepacks folder
+- Modrinth integration:
+  - Browse/search resource packs via Modrinth API
+  - Filter by game version (35 versions)
+  - Sort by relevance/downloads/follows/newest/updated
+  - One-click install with download progress bar
+  - Install confirmation modal (view on Modrinth before installing)
+  - Click result to open Modrinth project page
+
+SHADER PACKS
+------------
+- List installed shader packs from shaderpacks/ directory
+- Delete packs with confirmation dialog
+- Open shaderpacks folder
+- Modrinth integration:
+  - Browse/search shader packs via Modrinth API
+  - Filter by game version (35 versions)
+  - Filter by loader (Iris / OptiFine / Vanilla / Forge / Fabric / NeoForge / Quilt)
+  - Sort by relevance/downloads/follows/newest/updated
+  - One-click install with download progress bar
+  - Install confirmation modal (view on Modrinth before installing)
+  - Click result to open Modrinth project page
+- Prominent shader loader info banner with Iris, OptiFine, Oculus links
+
+CRASH REPORTS
+-------------
+- List crash reports from minecraftDirectory/crash-reports/
+- View crash report content
+- Delete individual or all crash reports
+
+LOGS
+----
+- Launcher log viewer (timestamped, color-coded by level)
+- Clear logs / delete log files
+- Separate log file per session
+- Lazy-loaded log file (deferred read for faster startup)
+
+PLAYTIME
+--------
+- Tracks launch sessions per account per version
+- Aggregated stats: total played, by version, by account, last sessions
+- Displayed on Accounts page (duration, session count, last played date)
+
+CLEANUP
+-------
+- Auto-cleanup old crash reports and logs based on configured days
+- Manual cleanup button
+
+UPDATE SYSTEM
+-------------
+- GitHub-based update checking (via electron-updater)
+- Download progress reporting
+- Auto-install on quit
+
+NAVIGATION
+----------
+- Sidebar navbar with flat items: HOME, NEWS, ACCOUNTS, VERSIONS, SERVERS, SETTINGS
+- Dropdown groups: CONTENT (WORLDS, PACKS, SHADERS, CAPTURES), DATA (CRASHES, LOGS)
+- Account switcher in sidebar footer
+- Version indicator badge on VERSIONS nav item (new versions available)
+- Command palette for quick page navigation
+
+TECHNICAL
+---------
+- TypeScript throughout (shared types between main + renderer)
+- Vite build for renderer
+- contextBridge + ipcRenderer for secure renderer ↔ main communication
+- Encrypted account storage (AES-256-GCM)
+- Offline UUID generation (MD5 of "OfflinePlayer:username")
+- NBT-based servers.dat manipulation (prismarine-nbt)
+- Server ping via raw TCP (SLP protocol, VarInt encoding)
+- Playtime persistence to JSON
+- News caching with background refresh
+- Steampunk visual theme (CSS custom properties, brass/copper/leather palette)
+- Modrinth API integration (search, version fetch, batch project lookup, install)
+- Download progress reporting via IPC streaming
+- React.lazy code splitting for faster startup

@@ -7,6 +7,7 @@ import {
   VersionManifest,
   MinecraftVersion,
   VersionJson,
+  ArgRule,
   AssetIndex,
   InstallProgress,
 } from '../../shared/types'
@@ -106,12 +107,60 @@ export class MinecraftService extends EventEmitter {
 
   async fetchVersionJson(versionId: string): Promise<VersionJson> {
     if (!this.manifest) await this.fetchManifest()
-    const version = this.manifest!.versions.find(v => v.id === versionId)
-    if (!version) throw new Error(`Version ${versionId} not found in manifest`)
 
-    const response = await (await getFetch())(version.url, { agent: HTTP_AGENT })
-    if (!response.ok) throw new Error(`Failed to fetch version JSON: ${response.status}`)
-    return response.json()
+    // Try loading from manifest URL first, then fall back to disk
+    const version = this.manifest!.versions.find(v => v.id === versionId)
+    let json: VersionJson
+    if (version?.url) {
+      const response = await (await getFetch())(version.url, { agent: HTTP_AGENT })
+      if (!response.ok) throw new Error(`Failed to fetch version JSON: ${response.status}`)
+      json = await response.json()
+    } else {
+      const diskPath = path.join(this.basePath, 'versions', versionId, `${versionId}.json`)
+      if (fs.existsSync(diskPath)) {
+        json = JSON.parse(fs.readFileSync(diskPath, 'utf-8'))
+      } else {
+        throw new Error(`Version JSON not found for ${versionId}`)
+      }
+    }
+
+    // Resolve inheritsFrom chain
+    if (json.inheritsFrom) {
+      const parent = await this.fetchVersionJson(json.inheritsFrom)
+      json = this.mergeInheritedVersion(parent, json)
+    }
+
+    return json
+  }
+
+  private mergeInheritedVersion(parent: VersionJson, child: VersionJson): VersionJson {
+    const merged: VersionJson = {
+      ...parent,
+      ...child,
+      libraries: [...(parent.libraries || []), ...(child.libraries || [])],
+    }
+
+    // Collect all game/jvm args from both legacy and modern formats
+    const gameArgs: (string | ArgRule)[] = []
+    const jvmArgs: (string | ArgRule)[] = []
+
+    const collectArgs = (json: VersionJson) => {
+      if (json.arguments?.game) gameArgs.push(...json.arguments.game)
+      if (json.arguments?.jvm) jvmArgs.push(...json.arguments.jvm)
+      if (json.minecraftArguments) {
+        for (const token of json.minecraftArguments.split(/\s+/)) {
+          if (token) gameArgs.push(token)
+        }
+      }
+    }
+
+    collectArgs(parent)
+    collectArgs(child)
+
+    merged.arguments = { game: gameArgs, jvm: jvmArgs }
+    delete (merged as any).minecraftArguments
+
+    return merged
   }
 
   getInstalledVersions(): string[] {
@@ -130,9 +179,28 @@ export class MinecraftService extends EventEmitter {
   private scanInstalledVersions() {
     if (!this.manifest) return
     const installed = this.getInstalledVersions()
+    const knownIds = new Set(this.manifest.versions.map(v => v.id))
     for (const version of this.manifest.versions) {
       version.installed = installed.includes(version.id)
     }
+    for (const dir of installed) {
+      if (!knownIds.has(dir)) {
+        this.manifest.versions.push({
+          id: dir,
+          type: 'custom',
+          url: '',
+          time: '',
+          releaseTime: '',
+          installed: true,
+        })
+      }
+    }
+  }
+
+  async refreshInstalled(): Promise<VersionManifest> {
+    if (!this.manifest) await this.fetchManifest()
+    this.scanInstalledVersions()
+    return this.manifest!
   }
 
   async installVersion(versionId: string): Promise<void> {

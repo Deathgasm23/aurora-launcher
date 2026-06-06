@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface ContextMenuItem {
   label: string
@@ -6,6 +6,7 @@ interface ContextMenuItem {
   onClick: () => void
   danger?: boolean
   disabled?: boolean
+  hidden?: boolean
 }
 
 interface ContextMenuProps {
@@ -18,6 +19,7 @@ interface ContextMenuProps {
 
 export default function ContextMenu({ open, x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ x, y })
 
   useEffect(() => {
     if (!open) return
@@ -37,11 +39,21 @@ export default function ContextMenu({ open, x, y, items, onClose }: ContextMenuP
     }
   }, [open, onClose])
 
+  useEffect(() => {
+    if (!open || !ref.current) return
+    const el = ref.current
+    const rect = el.getBoundingClientRect()
+    let cx = x, cy = y
+    if (rect.right > window.innerWidth) cx = window.innerWidth - rect.width - 8
+    if (rect.bottom > window.innerHeight) cy = window.innerHeight - rect.height - 8
+    setPos({ x: cx, y: cy })
+  }, [open, x, y])
+
   if (!open) return null
 
   return (
-    <div ref={ref} className="context-menu" style={{ left: x, top: y }}>
-      {items.map((item, i) => (
+    <div ref={ref} className="context-menu" style={{ left: pos.x, top: pos.y }}>
+      {items.filter(item => !item.hidden).map((item, i) => (
         <button
           key={i}
           className={`context-menu-item ${item.danger ? 'danger' : ''}`}

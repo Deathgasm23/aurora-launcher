@@ -4,14 +4,13 @@ export interface MinecraftAccount {
   uuid?: string
   accessToken?: string
   refreshToken?: string
-  skinUrl?: string
   type: 'microsoft' | 'offline'
   lastUsed: number
 }
 
 export type MinecraftVersion = {
   id: string
-  type: 'release' | 'snapshot' | 'old_beta' | 'old_alpha'
+  type: 'release' | 'snapshot' | 'old_beta' | 'old_alpha' | 'custom'
   url: string
   time: string
   releaseTime: string
@@ -43,6 +42,7 @@ export type VersionJson = {
   logging?: Logging
   complianceLevel?: number
   inheritsFrom?: string
+  releaseTime?: string
   javaVersion?: {
     component: string
     majorVersion: number
@@ -117,6 +117,16 @@ export type VersionMemory = {
   maxMemory?: number
 }
 
+export interface LaunchProfile {
+  id: string
+  name: string
+  maxMemory: number
+  width: number
+  height: number
+  fullscreen: boolean
+  javaArgs: string
+}
+
 export interface LauncherSettings {
   minecraftDirectory: string
   javaPath: string
@@ -127,10 +137,16 @@ export interface LauncherSettings {
   height: number
   fullscreen: boolean
   theme: 'dark' | 'light'
-  accentColor: string
   launchArgs: string
   lastVersion?: string
   versionMemory?: Record<string, VersionMemory>
+  pinnedVersions?: string[]
+  instanceNotes?: Record<string, string>
+  autoCleanupDays?: number
+  autoCleanupLogs?: boolean
+  performanceMode?: boolean
+  launchProfiles?: LaunchProfile[]
+  imgurClientId?: string
 }
 
 export type LaunchOptions = {
@@ -173,6 +189,7 @@ export interface ServerEntry {
   port: number
   version?: string
   icon?: string
+  group?: string
 }
 
 export interface ServerStatus {

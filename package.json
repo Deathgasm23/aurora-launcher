@@ -1,6 +1,6 @@
 {
   "name": "aurora-launcher",
-  "version": "1.2.8",
+  "version": "2.0.1",
   "author": "Morbryn",
   "description": "Aurora Launcher - Modern custom Minecraft Launcher",
   "main": "dist-electron/electron/main.js",
@@ -12,10 +12,13 @@
     "build:renderer": "vite build",
     "build": "npm run compile:electron && npm run build:renderer",
     "package": "npm run build && electron-builder",
-    "package:win": "npm run build && electron-builder --win && node scripts/clean-release.js",
+    "package:win": "node scripts/package.js",
     "lint": "tsc --noEmit --project tsconfig.json && tsc --noEmit --project tsconfig.electron.json"
   },
   "dependencies": {
+    "@fortawesome/fontawesome-svg-core": "^7.2.0",
+    "@fortawesome/free-solid-svg-icons": "^7.2.0",
+    "@fortawesome/react-fontawesome": "^3.3.1",
     "electron-updater": "^6.8.3",
     "lucide-react": "^0.294.0",
     "node-fetch": "^2.7.0",
@@ -54,14 +57,27 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "icon": "public/icon.ico",
+      "icon": "public/icon.png",
       "signAndEditExecutable": false
     },
     "portable": {
       "requestExecutionLevel": "user",
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "artifactName": "Aurora Launcher.${ext}"
+    },
+    "nsis": {
+      "artifactName": "Aurora Launcher Setup.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "publish": {
       "provider": "github",

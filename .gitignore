@@ -10,3 +10,5 @@ out/
 Thumbs.db
 
 .vite/
+release-*/
+/minecraft launcher/

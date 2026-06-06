@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Check, Loader2, Zap, RefreshCw, Cpu, FolderOpen, Download } from 'lucide-react'
-import type { MinecraftAccount, MinecraftVersion, InstallProgress } from '../../shared/types'
+import { Check, Loader2, Zap, RefreshCw, Cpu, FolderOpen, Download, Save, Clock } from 'lucide-react'
+import type { MinecraftAccount, MinecraftVersion, InstallProgress, LaunchProfile } from '../../shared/types'
 import Notification from '../components/common/Notification'
+import { playChime } from '../utils/sound'
 
 interface HomeProps {
   currentAccount: MinecraftAccount | null
@@ -18,6 +19,15 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
   const [notif, setNotif] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null)
   const [javaOverride, setJavaOverride] = useState('')
+  const [profiles, setProfiles] = useState<LaunchProfile[]>([])
+  const [playtimeStats, setPlaytimeStats] = useState<any>(null)
+
+  const loadPlaytime = useCallback(async () => {
+    try {
+      const stats = await window.electronAPI.playtime.getStats()
+      setPlaytimeStats(stats)
+    } catch {}
+  }, [])
 
   const loadManifest = useCallback(async () => {
     try {
@@ -44,6 +54,8 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
 
   useEffect(() => {
     loadManifest()
+    loadPlaytime()
+    window.electronAPI.settings.get().then(s => setProfiles(s.launchProfiles || []))
 
     const onProgress = (progress: InstallProgress) => {
       setInstallProgress(progress)
@@ -52,6 +64,7 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
         if (progress.status === 'done') {
           setTimeout(() => setInstallProgress(null), 2000)
           setNotif({ message: progress.message, type: 'success' })
+          playChime()
         }
       }
     }
@@ -118,17 +131,12 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
         <div className="flex items-center justify-center" style={{ padding: 64 }}>
           <div className="spinner" />
         </div>
-      ) : (
-      <div className="flex items-center justify-center" style={{ paddingTop: 32 }}>
+      ) : (<>
         <div className="launch-panel" style={{ maxWidth: 400, width: '100%' }}>
           <div className="launch-avatar">
-            {currentAccount?.skinUrl ? (
-              <img src={currentAccount.skinUrl} alt="skin" />
-            ) : (
-              <div className="launch-avatar-placeholder">
-                {currentAccount?.username?.charAt(0).toUpperCase() || '?'}
-              </div>
-            )}
+            <div className="launch-avatar-placeholder">
+              {currentAccount?.username?.charAt(0).toUpperCase() || '?'}
+            </div>
           </div>
           <div className="launch-username">
             {currentAccount?.username || 'No Account Selected'}
@@ -164,12 +172,22 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
             </div>
             {selectedVersionData && (
               <div className="flex items-center gap-2" style={{ marginTop: 6 }}>
-                <span className={`badge ${selectedVersionData.type === 'release' ? 'badge-release' : 'badge-snapshot'}`}>
-                  {selectedVersionData.type}
-                </span>
-                <span className="text-xs text-muted">
-                  {new Date(selectedVersionData.releaseTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                </span>
+                {selectedVersionData.type !== 'custom' && (
+                  <span className={`badge ${selectedVersionData.type === 'release' ? 'badge-release' : 'badge-snapshot'}`}>
+                    {selectedVersionData.type}
+                  </span>
+                )}
+                {selectedVersionData.releaseTime && (
+                  <span className="text-xs text-muted">
+                    {new Date(selectedVersionData.releaseTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </span>
+                )}
+                {playtimeStats?.byVersion?.[selectedVersion] && (
+                  <span className="text-xs text-muted" style={{ marginLeft: 'auto' }}>
+                    <Clock size={11} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
+                    {Math.round(playtimeStats.byVersion[selectedVersion].totalDuration / 60)}m played
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -183,12 +201,34 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
                   value={javaOverride}
                   onChange={e => setJavaOverride(e.target.value)}
                   disabled={launching || gameRunning}
-                  style={{ paddingLeft: 32, fontSize: 12 }}
+                  style={{ paddingLeft: 32 }}
                 />
                 <Cpu size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
               </div>
             </div>
           </div>
+
+          {profiles.length > 0 && (
+            <div className="w-full" style={{ maxWidth: 320 }}>
+              <div className="flex items-center gap-2">
+                <select className="select" style={{ flex: 1 }}
+                  defaultValue=""
+                  onChange={async e => {
+                    const p = profiles.find(pr => pr.id === e.target.value)
+                    if (!p) return
+                    const s = await window.electronAPI.settings.get()
+                    await window.electronAPI.settings.set({ ...s, maxMemory: p.maxMemory, width: p.width, height: p.height, fullscreen: p.fullscreen, javaArgs: p.javaArgs })
+                    setNotif({ message: `Applied profile: ${p.name}`, type: 'success' })
+                  }}>
+                  <option value="" disabled>Apply profile...</option>
+                  {profiles.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <Save size={14} style={{ color: 'var(--text-muted)' }} />
+              </div>
+            </div>
+          )}
 
           <div className="w-full" style={{ maxWidth: 320, display: 'flex', gap: 8 }}>
             {!latestInstalled && latestRelease && (
@@ -235,10 +275,8 @@ export default function Home({ currentAccount, onLaunch, lastVersion }: HomeProp
               </div>
             </div>
           )}
-
-
         </div>
-      </div>
+      </>
       )}
     </div>
   )

@@ -1,17 +1,23 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { Download, Loader2, X } from 'lucide-react'
 import { MinecraftAccount, LauncherSettings, QueuedDownload } from '../shared/types'
 import Titlebar from './components/Layout/Titlebar'
-import Sidebar from './components/Sidebar/Sidebar'
+import Navbar from './components/Sidebar/Sidebar'
 import Home from './pages/Home'
-import Accounts from './pages/Accounts'
-import Versions from './pages/Versions'
-import Settings from './pages/Settings'
-import Logs from './pages/Logs'
+import CommandPalette from './components/CommandPalette'
+import { playChime } from './utils/sound'
 
-import ServersPage from './pages/ServersPage'
-import Screenshots from './pages/Screenshots'
-import CrashReports from './pages/CrashReports'
+const Accounts = lazy(() => import('./pages/Accounts'))
+const Versions = lazy(() => import('./pages/Versions'))
+const Settings = lazy(() => import('./pages/Settings'))
+const Logs = lazy(() => import('./pages/Logs'))
+const ServersPage = lazy(() => import('./pages/ServersPage'))
+const Screenshots = lazy(() => import('./pages/Screenshots'))
+const CrashReports = lazy(() => import('./pages/CrashReports'))
+const NewsPage = lazy(() => import('./pages/NewsPage'))
+const WorldsPage = lazy(() => import('./pages/WorldsPage'))
+const ResourcePacksPage = lazy(() => import('./pages/ResourcePacksPage'))
+const ShaderpacksPage = lazy(() => import('./pages/ShaderpacksPage'))
 
 export default function App() {
   const [activePage, setActivePage] = useState('home')
@@ -51,14 +57,12 @@ export default function App() {
   }, [settings, accounts])
 
   useEffect(() => {
-    if (settings?.accentColor) {
-      document.documentElement.style.setProperty('--accent', settings.accentColor)
-      const hover = lightenColor(settings.accentColor, 20)
-      document.documentElement.style.setProperty('--accent-hover', hover)
-      document.documentElement.style.setProperty('--accent-dim', settings.accentColor + '1a')
-      document.documentElement.style.setProperty('--accent-subtle', settings.accentColor + '0a')
+    if (settings?.theme === 'light') {
+      document.documentElement.classList.add('theme-light')
+    } else {
+      document.documentElement.classList.remove('theme-light')
     }
-  }, [settings?.accentColor])
+  }, [settings?.theme])
 
   async function handleFirstLaunchCreate() {
     if (!firstLaunchUsername.trim()) return
@@ -84,7 +88,7 @@ export default function App() {
   useEffect(() => {
     window.electronAPI.update.check()
     window.electronAPI.update.onChecking(() => setUpdateInfo({ status: 'checking' }))
-    window.electronAPI.update.onAvailable((info) => setUpdateInfo({ status: 'available', version: info.version }))
+    window.electronAPI.update.onAvailable((info) => { setUpdateInfo({ status: 'available', version: info.version }); playChime() })
     window.electronAPI.update.onNotAvailable(() => {
       setUpdateInfo({ status: 'uptodate' })
       setTimeout(() => setUpdateInfo(null), 3000)
@@ -107,24 +111,14 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && !e.metaKey) {
-        const pageMap: Record<string, string> = {
-          '1': 'home', '2': 'accounts', '3': 'versions',
-          '4': 'settings', '5': 'logs', '6': 'servers',
-          '8': 'screenshots',
-        }
-        if (e.key === '-') { e.preventDefault(); setActivePage('crash-reports'); return }
-        const page = pageMap[e.key]
-        if (page) {
-          e.preventDefault()
-          setActivePage(page)
-        }
-      }
+    if (settings?.performanceMode) {
+      document.documentElement.classList.add('performance-mode')
+    } else {
+      document.documentElement.classList.remove('performance-mode')
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [settings?.performanceMode])
+
+  // keyboard shortcuts removed to prevent interference with typing
 
   const handleLaunch = useCallback(async (accountId: string, versionId: string, javaPath?: string): Promise<{ success: boolean; error?: string }> => {
     try {
@@ -138,9 +132,12 @@ export default function App() {
   }, [])
 
   const handleVersionsLaunch = useCallback(async (accountId: string, versionId: string) => {
-    await window.electronAPI.launch.setLastVersion(versionId)
-    setActivePage('home')
-  }, [])
+    const result = await handleLaunch(accountId, versionId)
+    if (result.success) {
+      window.electronAPI.launch.setLastVersion(versionId)
+    }
+    return result
+  }, [handleLaunch])
 
   function addToQueue(versionId: string) {
     setDownloadQueue(prev => {
@@ -159,12 +156,12 @@ export default function App() {
 
   if (!settings) {
     return (
-      <div className="app-layout">
+      <>
         <Titlebar />
-        <div className="flex items-center justify-center" style={{ flex: 1, paddingTop: 32 }}>
+        <div className="load-screen">
           <div className="spinner" style={{ width: 32, height: 32 }} />
         </div>
-      </div>
+      </>
     )
   }
 
@@ -184,6 +181,14 @@ export default function App() {
         return <ServersPage currentAccount={currentAccount} />
       case 'screenshots':
         return <Screenshots />
+      case 'news':
+        return <NewsPage />
+      case 'worlds':
+        return <WorldsPage />
+      case 'resource-packs':
+        return <ResourcePacksPage />
+      case 'shaderpacks':
+        return <ShaderpacksPage />
       case 'crash-reports':
         return <CrashReports />
       default:
@@ -193,6 +198,7 @@ export default function App() {
 
   return (
     <>
+    <CommandPalette onNavigate={setActivePage} />
     {firstLaunch && (
       <div className="modal-overlay" style={{ zIndex: 5000 }}>
         <div className="modal" style={{ textAlign: 'center', maxWidth: 380 }} onClick={e => e.stopPropagation()}>
@@ -226,54 +232,53 @@ export default function App() {
         </div>
       </div>
     )}
-    <div className="app-layout">
-      <Titlebar />
-      <Sidebar activePage={activePage} onNavigate={setActivePage} newVersionsCount={newVersionsCount} onNewVersionsRead={() => setNewVersionsCount(0)} />
-      {!firstLaunch && updateInfo && updateInfo.status !== 'checking' && updateInfo.status !== 'uptodate' && (
-        <div className="update-bar">
-          {updateInfo.status === 'available' && (
-            <><Download size={14} /> Update <strong>v{updateInfo.version}</strong> available
-              <button className="btn btn-primary btn-xs" style={{ marginLeft: 'auto' }} onClick={() => {
-                window.electronAPI.shell.openExternal('https://github.com/Deathgasm23/aurora-launcher/releases')
-              }}>Download</button>
-              <button className="btn btn-ghost btn-xs" onClick={() => setUpdateInfo(null)}><X size={12} /></button>
-            </>
-          )}
-          {updateInfo.status === 'downloading' && (
-            <><Loader2 size={14} className="spinner" /> Downloading update... {updateInfo.progress}%
-              <div className="progress-bar" style={{ flex: 1, maxWidth: 160, marginLeft: 8 }}>
-                <div className="progress-fill" style={{ width: `${updateInfo.progress}%` }} />
-              </div>
-            </>
-          )}
-          {updateInfo.status === 'downloaded' && (
-            <><Download size={14} /> Update <strong>v{updateInfo.version}</strong> downloaded
-              <button className="btn btn-primary btn-xs" style={{ marginLeft: 'auto' }} onClick={() => window.electronAPI.update.install()}>Restart & Install</button>
-              <button className="btn btn-ghost btn-xs" onClick={() => setUpdateInfo(null)}><X size={12} /></button>
-            </>
-          )}
-          {updateInfo.status === 'error' && (
-            <><X size={14} /> Update check: {updateInfo.error}</>
-          )}
-        </div>
-      )}
-      <div className="main-content">
-        {renderPage()}
+    <Titlebar />
+    <Navbar activePage={activePage} onNavigate={setActivePage} newVersionsCount={newVersionsCount} onNewVersionsRead={() => setNewVersionsCount(0)} accounts={accounts} currentAccount={currentAccount} onSwitchAccount={async (accountId) => { await window.electronAPI.auth.setCurrentAccount(accountId); refreshState() }} />
+    {!firstLaunch && updateInfo && updateInfo.status !== 'checking' && updateInfo.status !== 'uptodate' && (
+      <div className="update-bar">
+        {updateInfo.status === 'available' && (
+          <><Download size={14} /> Update <strong>v{updateInfo.version}</strong> available
+            <button className="btn btn-primary btn-xs" style={{ marginLeft: 'auto' }} onClick={() => {
+              window.electronAPI.shell.openExternal('https://github.com/Deathgasm23/aurora-launcher/releases')
+            }}>Download</button>
+            <button className="btn btn-ghost btn-xs" onClick={() => setUpdateInfo(null)}><X size={12} /></button>
+          </>
+        )}
+        {updateInfo.status === 'downloading' && (
+          <><Loader2 size={14} className="spinner" /> Downloading update... {updateInfo.progress}%
+            <div className="progress-bar" style={{ flex: 1, maxWidth: 160, marginLeft: 8 }}>
+              <div className="progress-fill" style={{ width: `${updateInfo.progress}%` }} />
+            </div>
+          </>
+        )}
+        {updateInfo.status === 'downloaded' && (
+          <><Download size={14} /> Update <strong>v{updateInfo.version}</strong> downloaded
+            <button className="btn btn-primary btn-xs" style={{ marginLeft: 'auto' }} onClick={() => window.electronAPI.update.install()}>Restart & Install</button>
+            <button className="btn btn-ghost btn-xs" onClick={() => setUpdateInfo(null)}><X size={12} /></button>
+          </>
+        )}
+        {updateInfo.status === 'error' && (
+          <><X size={14} /> Update check: {updateInfo.error}</>
+        )}
       </div>
-      {downloadQueue.length > 0 && (
-        <DownloadQueueBar queue={downloadQueue} onRemove={removeFromQueue} />
-      )}
+    )}
+    <div className="main-content">
+      <Suspense fallback={<div className="flex items-center justify-center" style={{ flex: 1, padding: 48 }}><div className="spinner" /></div>}>
+        {renderPage()}
+      </Suspense>
+      <div className="page-footer">
+        <button className="btn btn-ghost btn-sm" onClick={() => window.electronAPI.shell.openExternal('https://github.com/Deathgasm23/aurora-launcher')}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" /></svg>
+          GitHub
+        </button>
+        <span className="text-xs text-muted">Aurora Launcher — open source Minecraft launcher</span>
+      </div>
     </div>
+    {downloadQueue.length > 0 && (
+      <DownloadQueueBar queue={downloadQueue} onRemove={removeFromQueue} />
+    )}
     </>
   )
-}
-
-function lightenColor(hex: string, percent: number): string {
-  const num = parseInt(hex.replace('#', ''), 16)
-  const r = Math.min(255, (num >> 16) + percent)
-  const g = Math.min(255, ((num >> 8) & 0x00FF) + percent)
-  const b = Math.min(255, (num & 0x0000FF) + percent)
-  return `#${(r << 16 | g << 8 | b).toString(16).padStart(6, '0')}`
 }
 
 function DownloadQueueBar({ queue, onRemove }: { queue: QueuedDownload[]; onRemove: (id: string) => void }) {

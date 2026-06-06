@@ -7,12 +7,11 @@ export default function Titlebar() {
 
   return (
     <div className="titlebar">
-      <div className="titlebar-title">Aurora Launcher</div>
       <div className="titlebar-drag" />
       <div className="titlebar-controls">
-        <button className="titlebar-btn" onClick={handleMinimize} title="Minimize"><Minus size={14} /></button>
-        <button className="titlebar-btn" onClick={handleMaximize} title="Maximize"><Square size={12} /></button>
-        <button className="titlebar-btn close" onClick={handleClose} title="Close"><X size={14} /></button>
+        <button className="titlebar-btn" onClick={handleMinimize} title="Minimize"><Minus size={12} /></button>
+        <button className="titlebar-btn" onClick={handleMaximize} title="Maximize"><Square size={10} /></button>
+        <button className="titlebar-btn close" onClick={handleClose} title="Close"><X size={12} /></button>
       </div>
     </div>
   )

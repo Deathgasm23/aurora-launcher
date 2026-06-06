@@ -12,7 +12,6 @@ export class LogsService {
 
   constructor(dataDir?: string) {
     this.logPath = path.join(dataDir || app.getPath('userData'), LOG_FILE)
-    this.loadExisting()
   }
 
   private loadExisting() {
@@ -48,13 +47,32 @@ export class LogsService {
   }
 
   getLogs(): LogEntry[] {
-    return [...this.logs]
+    if (this.logs.length === 0) this.loadExisting()
+    return this.logs
   }
 
   clear() {
     this.logs = []
     try {
       if (fs.existsSync(this.logPath)) fs.unlinkSync(this.logPath)
+    } catch {}
+  }
+
+  deleteEntry(index: number): boolean {
+    if (index < 0 || index >= this.logs.length) return false
+    this.logs.splice(index, 1)
+    try {
+      fs.writeFileSync(this.logPath, this.logs.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8')
+    } catch {}
+    return true
+  }
+
+  deleteAllFiles() {
+    this.logs = []
+    try {
+      if (fs.existsSync(this.logPath)) fs.unlinkSync(this.logPath)
+      const oldPath = this.logPath + '.old'
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath)
     } catch {}
   }
 }

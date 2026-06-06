@@ -2,7 +2,7 @@ import { ChildProcess, spawn } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import { EventEmitter } from 'events'
-import { dialog, shell } from 'electron'
+import { dialog, shell, app } from 'electron'
 import { LaunchOptions, VersionJson, ArgRule, Rule } from '../../shared/types'
 
 export class LaunchService extends EventEmitter {
@@ -117,10 +117,9 @@ export class LaunchService extends EventEmitter {
     const classPath = this.buildClassPath(versionJson, mcDir)
     args.push('-cp', classPath)
 
-    args.push(versionJson.mainClass || 'net.minecraft.client.main.Main')
-
-    const gameArgs = this.buildGameArgs(account, versionJson, mcDir, settings, extras)
-    args.push(...gameArgs)
+    const mainClass = versionJson.mainClass || 'net.minecraft.client.main.Main'
+    args.push(mainClass)
+    args.push(...this.buildGameArgs(account, versionJson, mcDir, settings, extras))
 
     return args
   }
@@ -235,14 +234,32 @@ export class LaunchService extends EventEmitter {
     const jarPath = path.join(versionDir, `${versionJson.id}.jar`)
     if (fs.existsSync(jarPath)) parts.push(jarPath)
 
-    if (versionJson.libraries) {
-      for (const lib of versionJson.libraries) {
-        if (lib.downloads?.artifact?.path) {
-          const libPath = path.join(mcDir, 'libraries', lib.downloads.artifact.path.replace(/\//g, path.sep))
-          if (fs.existsSync(libPath)) parts.push(libPath)
+    const added = new Set<string>()
+    const addLibrary = (lib: any) => {
+      let libPath: string | undefined
+      if (lib.downloads?.artifact?.path) {
+        libPath = path.join(mcDir, 'libraries', lib.downloads.artifact.path.replace(/\//g, path.sep))
+      } else if (lib.name) {
+        const parts2 = lib.name.split(':')
+        if (parts2.length >= 3) {
+          const [group, artifact, ver] = parts2
+          const ext = lib.downloads?.artifact?.extension || 'jar'
+          const file = lib.downloads?.artifact?.name || `${artifact}-${ver}.${ext}`
+          libPath = path.join(mcDir, 'libraries', ...group.split('.'), artifact, ver, file)
         }
       }
+      if (libPath && fs.existsSync(libPath) && !added.has(libPath)) {
+        parts.push(libPath)
+        added.add(libPath)
+      }
     }
+
+    const addLibraries = (libs: typeof versionJson.libraries) => {
+      if (!libs) return
+      for (const lib of libs) addLibrary(lib)
+    }
+
+    addLibraries(versionJson.libraries)
 
     return parts.join(path.delimiter)
   }
@@ -356,8 +373,8 @@ export class LaunchService extends EventEmitter {
       .replace('${user_type}', account.type === 'microsoft' ? 'msa' : 'mojang')
       .replace('${resolution_width}', settings.width.toString())
       .replace('${resolution_height}', settings.height.toString())
-      .replace('${launcher_name}', 'aurora-launcher')
-      .replace('${launcher_version}', '1.2.8')
+      .replace('${launcher_name}', 'Aurora Launcher')
+      .replace('${launcher_version}', '2.0.1')
       .replace('${classpath}', '')
       .replace('${library_directory}', path.join(mcDir, 'libraries'))
       .replace('${natives_directory}', path.join(mcDir, 'natives'))

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Image, FolderOpen, Trash2, ExternalLink } from 'lucide-react'
+import { Image, FolderOpen, Trash2, Eye, Copy, FolderUp, Upload } from 'lucide-react'
 import type { ScreenshotEntry } from '../../shared/types'
 import Notification from '../components/common/Notification'
 import EmptyState from '../components/common/EmptyState'
+import ContextMenu from '../components/common/ContextMenu'
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B'
@@ -19,6 +20,7 @@ export default function Screenshots() {
   const [loading, setLoading] = useState(true)
   const [notif, setNotif] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; screenshot: ScreenshotEntry } | null>(null)
 
   async function loadScreenshots() {
     try {
@@ -34,6 +36,40 @@ export default function Screenshots() {
 
   function handleOpenFolder() {
     window.electronAPI.screenshots.open()
+  }
+
+  async function handleDelete(path: string) {
+    const result = await window.electronAPI.screenshots.delete(path)
+    if (result.success) {
+      setScreenshots(prev => prev.filter(s => s.path !== path))
+      setNotif({ message: 'Screenshot deleted', type: 'success' })
+    } else {
+      setNotif({ message: result.error || 'Failed to delete', type: 'error' })
+    }
+  }
+
+  function handleShowInFolder(path: string) {
+    window.electronAPI.shell.showItemInFolder(path)
+  }
+
+  async function handleCopyPhoto(path: string) {
+    const result = await window.electronAPI.screenshots.copyImage(path)
+    if (result.success) {
+      setNotif({ message: 'Screenshot copied', type: 'info' })
+    } else {
+      setNotif({ message: result.error || 'Failed to copy', type: 'error' })
+    }
+  }
+
+  async function handleUploadImgur(path: string) {
+    setNotif({ message: 'Uploading to Imgur...', type: 'info' })
+    const result = await window.electronAPI.screenshots.uploadImgur(path)
+    if (result.success && result.url) {
+      await navigator.clipboard.writeText(result.url)
+      setNotif({ message: `Uploaded! URL copied: ${result.url}`, type: 'success' })
+    } else {
+      setNotif({ message: result.error || 'Upload failed', type: 'error' })
+    }
   }
 
   return (
@@ -68,6 +104,7 @@ export default function Screenshots() {
               key={s.name}
               className="screenshot-card"
               onClick={() => setPreview(s.path)}
+              onContextMenu={e => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, screenshot: s }) }}
               style={{ cursor: 'pointer' }}
             >
               <div className="screenshot-thumb">
@@ -82,9 +119,23 @@ export default function Screenshots() {
         </div>
       )}
 
+      <ContextMenu
+        open={!!contextMenu}
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
+        onClose={() => setContextMenu(null)}
+        items={contextMenu ? [
+          { label: 'View', icon: <Eye size={12} />, onClick: () => setPreview(contextMenu.screenshot.path) },
+          { label: 'Show in Folder', icon: <FolderUp size={12} />, onClick: () => handleShowInFolder(contextMenu.screenshot.path) },
+          { label: 'Copy Photo', icon: <Copy size={12} />, onClick: () => handleCopyPhoto(contextMenu.screenshot.path) },
+          { label: 'Upload Imgur', icon: <Upload size={12} />, onClick: () => handleUploadImgur(contextMenu.screenshot.path) },
+          { label: 'Delete', icon: <Trash2 size={12} />, onClick: () => handleDelete(contextMenu.screenshot.path), danger: true },
+        ] : []}
+      />
+
       {preview && (
-        <div className="modal-overlay" onClick={() => setPreview(null)} style={{ zIndex: 5000 }}>
-          <div className="modal" style={{ maxWidth: '90vw', maxHeight: '90vh', padding: 0, overflow: 'hidden', background: 'transparent' }} onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setPreview(null)} style={{ maxWidth: 'none', width: '100vw', zIndex: 5000 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', maxWidth: '90vw', maxHeight: '90vh', padding: 0, overflow: 'hidden', background: 'transparent' }} onClick={e => e.stopPropagation()}>
             <img src={`file://${preview}`} alt="" style={{ maxWidth: '100%', maxHeight: '85vh', display: 'block', borderRadius: 'var(--radius-md)' }} />
           </div>
         </div>

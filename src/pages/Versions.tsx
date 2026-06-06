@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Download, RefreshCw, Package, Loader2, Trash2, RotateCcw, Search, Play, FolderOpen, Info, PlayIcon, ChevronDown, ChevronRight, MemoryStick } from 'lucide-react'
+import { Download, RefreshCw, Package, Loader2, Trash2, RotateCcw, Search, Play, FolderOpen, Info, PlayIcon, ChevronDown, ChevronRight, MemoryStick, Star, FileText, Save, X, Eye } from 'lucide-react'
 import type { MinecraftVersion, MinecraftAccount, InstallProgress, VersionJson, LauncherSettings } from '../../shared/types'
 import Notification from '../components/common/Notification'
 import EmptyState from '../components/common/EmptyState'
 import ConfirmDialog from '../components/common/ConfirmDialog'
 import Modal from '../components/common/Modal'
 import ContextMenu from '../components/common/ContextMenu'
+import { playChime } from '../utils/sound'
 
 interface VersionsProps {
   currentAccount: MinecraftAccount | null
@@ -21,7 +22,8 @@ function getMajorGroup(id: string): string {
 
 function Versions({ currentAccount, onLaunch }: VersionsProps) {
   const [versions, setVersions] = useState<MinecraftVersion[]>([])
-  const [filter, setFilter] = useState<'all' | 'release' | 'snapshot'>('release')
+  const [filter, setFilter] = useState<'all' | 'release' | 'snapshot' | 'custom'>('all')
+  const [showInstalledOnly, setShowInstalledOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [installing, setInstalling] = useState<string | null>(null)
   const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null)
@@ -36,7 +38,13 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
   const [memSettings, setMemSettings] = useState<LauncherSettings | null>(null)
   const [memVersionId, setMemVersionId] = useState<string | null>(null)
   const [memValue, setMemValue] = useState(4096)
-
+  const [pinnedVersions, setPinnedVersions] = useState<string[]>([])
+  const [instanceNotes, setInstanceNotes] = useState<Record<string, string>>({})
+  const [noteVersionId, setNoteVersionId] = useState<string | null>(null)
+  const [noteText, setNoteText] = useState('')
+  const [batchMode, setBatchMode] = useState(false)
+  const [selectedVersions, setSelectedVersions] = useState<Set<string>>(new Set())
+  const [batchInstalling, setBatchInstalling] = useState(false)
   const loadVersions = useCallback(async () => {
     try {
       const manifest = await window.electronAPI.versions.getManifest()
@@ -50,6 +58,11 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
   useEffect(() => {
     loadVersions()
 
+    window.electronAPI.settings.get().then(s => {
+      setPinnedVersions(s.pinnedVersions || [])
+      setInstanceNotes(s.instanceNotes || {})
+    })
+
     window.electronAPI.versions.onInstallProgress((progress: InstallProgress) => {
       setInstallProgress(progress)
       if (progress.status === 'done') {
@@ -57,6 +70,7 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
         loadVersions()
         setTimeout(() => setInstallProgress(null), 2000)
         setNotif({ message: progress.message, type: 'success' })
+        playChime()
       }
       if (progress.status === 'error') {
         setInstalling(null)
@@ -138,6 +152,32 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
     onLaunch(currentAccount.id, versionId)
   }
 
+  async function togglePin(versionId: string) {
+    const settings = await window.electronAPI.settings.get()
+    const current = settings.pinnedVersions || []
+    const next = current.includes(versionId)
+      ? current.filter((v: string) => v !== versionId)
+      : [...current, versionId]
+    setPinnedVersions(next)
+    await window.electronAPI.settings.set({ ...settings, pinnedVersions: next })
+  }
+
+  function openNoteModal(versionId: string, note: string) {
+    setNoteVersionId(versionId)
+    setNoteText(note)
+  }
+
+  async function saveNote() {
+    if (!noteVersionId) return
+    const settings = await window.electronAPI.settings.get()
+    const notes = { ...(settings.instanceNotes || {}), [noteVersionId]: noteText }
+    setInstanceNotes(notes)
+    await window.electronAPI.settings.set({ ...settings, instanceNotes: notes })
+    setNoteVersionId(null)
+    setNoteText('')
+    setNotif({ message: 'Note saved', type: 'success' })
+  }
+
   async function openMemoryModal(versionId: string) {
     const settings = await window.electronAPI.settings.get()
     setMemSettings(settings)
@@ -171,22 +211,74 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
     setNotif({ message: `RAM reset to global default for ${memVersionId}`, type: 'info' })
   }
 
+  function toggleBatchSelect(versionId: string) {
+    setSelectedVersions(prev => {
+      const next = new Set(prev)
+      if (next.has(versionId)) next.delete(versionId)
+      else next.add(versionId)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    if (selectedVersions.size === filteredVersions.length) {
+      setSelectedVersions(new Set())
+    } else {
+      setSelectedVersions(new Set(filteredVersions.map(v => v.id)))
+    }
+  }
+
+  async function handleBatchInstall() {
+    setBatchInstalling(true)
+    for (const id of selectedVersions) {
+      if (versions.find(v => v.id === id)?.installed) continue
+      await window.electronAPI.versions.installVersion(id)
+    }
+    setBatchInstalling(false)
+    setSelectedVersions(new Set())
+    setBatchMode(false)
+    loadVersions()
+    setNotif({ message: 'Batch install complete', type: 'success' })
+  }
+
+  async function handleBatchDelete() {
+    for (const id of selectedVersions) {
+      await window.electronAPI.versions.deleteVersion(id)
+    }
+    setSelectedVersions(new Set())
+    setBatchMode(false)
+    loadVersions()
+    setNotif({ message: 'Batch delete complete', type: 'success' })
+  }
+
   const filteredVersions = versions.filter(v => {
     if (filter === 'release') return v.type === 'release'
     if (filter === 'snapshot') return v.type === 'snapshot'
+    if (filter === 'custom') return v.type === 'custom'
     return true
-  }).filter(v => !search || v.id.toLowerCase().includes(search.toLowerCase()))
+  }).filter(v => !showInstalledOnly || v.installed)
+    .filter(v => !search || v.id.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      const aPinned = pinnedVersions.includes(a.id)
+      const bPinned = pinnedVersions.includes(b.id)
+      if (aPinned && !bPinned) return -1
+      if (!aPinned && bPinned) return 1
+      return 0
+    })
 
   const grouped = filteredVersions.reduce<Record<string, MinecraftVersion[]>>((acc, v) => {
-    const group = v.type === 'snapshot' || v.type === 'old_beta' || v.type === 'old_alpha'
-      ? 'Snapshots & Old'
-      : getMajorGroup(v.id)
+    const group = v.type === 'custom' ? 'Custom'
+      : v.type === 'snapshot' || v.type === 'old_beta' || v.type === 'old_alpha'
+        ? 'Snapshots & Old'
+        : getMajorGroup(v.id)
     if (!acc[group]) acc[group] = []
     acc[group].push(v)
     return acc
   }, {})
 
   const groupKeys = Object.keys(grouped).sort((a, b) => {
+    if (a === 'Custom') return 1
+    if (b === 'Custom') return -1
     if (a === 'Snapshots & Old') return 1
     if (b === 'Snapshots & Old') return -1
     const aParts = a.replace('.x', '').split('.').map(Number)
@@ -209,14 +301,25 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
 
   function renderVersionCard(version: MinecraftVersion) {
     const badgeClass = version.type === 'release' ? 'badge-release' :
-      version.type === 'snapshot' ? 'badge-snapshot' : 'badge-old'
+      version.type === 'snapshot' ? 'badge-snapshot' :
+      version.type === 'custom' ? 'badge-custom' : 'badge-old'
+    const isPinned = pinnedVersions.includes(version.id)
+    const note = instanceNotes[version.id]
     return (
-      <div key={version.id} className="version-card" onContextMenu={e => handleContextMenu(e, version.id, !!version.installed)}>
+      <div key={version.id} className={`version-card ${isPinned ? 'pinned' : ''}`} onContextMenu={e => handleContextMenu(e, version.id, !!version.installed)}>
         <div className="version-info">
-          <div className="version-name">{version.id}</div>
+          <div className="version-name">
+            {batchMode && (
+              <input type="checkbox" className="version-checkbox"
+                checked={selectedVersions.has(version.id)}
+                onChange={() => toggleBatchSelect(version.id)} />
+            )}
+            {isPinned && <Star size={12} fill="var(--accent)" color="var(--accent)" style={{ marginRight: 6 }} />}
+            {version.id}
+          </div>
           <div className="version-date">
-            <span className={`badge ${badgeClass}`}>{version.type}</span>
-            {new Date(version.releaseTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+            {version.type !== 'custom' && <span className={`badge ${badgeClass}`}>{version.type}</span>}
+            {version.releaseTime && <span style={{ marginLeft: version.type !== 'custom' ? 8 : 0 }}>{new Date(version.releaseTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
             <button
               className="btn btn-ghost btn-xs"
               onClick={() => handleShowDetails(version.id)}
@@ -226,8 +329,25 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
               <Info size={11} />
             </button>
           </div>
+          {note && <div className="version-note-preview">{note}</div>}
         </div>
-        {version.installed ? (
+        <div className="flex items-center gap-1">
+          <button
+            className="btn btn-ghost btn-xs"
+            onClick={() => togglePin(version.id)}
+            title={isPinned ? 'Unpin' : 'Pin to top'}
+            style={{ color: isPinned ? 'var(--accent)' : undefined }}
+          >
+            <Star size={12} fill={isPinned ? 'var(--accent)' : 'none'} />
+          </button>
+          <button
+            className="btn btn-ghost btn-xs"
+            onClick={() => openNoteModal(version.id, note || '')}
+            title="Instance notes"
+          >
+            <FileText size={12} />
+          </button>
+          {version.installed ? (
           <div className="flex items-center gap-2">
             <button
               className="btn btn-primary btn-sm"
@@ -236,6 +356,20 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
               title={currentAccount ? 'Launch' : 'Select an account first'}
             >
               <Play size={14} fill="currentColor" />
+            </button>
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={() => openMemoryModal(version.id)}
+              title="Memory settings"
+            >
+              <MemoryStick size={12} />
+            </button>
+            <button
+              className="btn btn-ghost btn-xs"
+              onClick={() => window.electronAPI.shell.openExternal('https://optifine.net/downloads')}
+              title="OptiFine downloads"
+            >
+              <Eye size={12} />
             </button>
             <button
               className="btn btn-ghost btn-xs"
@@ -270,6 +404,7 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
           </button>
         )}
       </div>
+    </div>
     )
   }
 
@@ -288,7 +423,7 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
         </div>
       ) : (
       <>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4" style={{ gap: 12, flexWrap: 'wrap' }}>
         <div className="filter-bar">
           <button
             className={`filter-btn ${filter === 'release' ? 'active' : ''}`}
@@ -308,29 +443,63 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
           >
             All
           </button>
+          <button
+            className={`filter-btn ${filter === 'custom' ? 'active' : ''}`}
+            onClick={() => setFilter('custom')}
+          >
+            Custom
+          </button>
+          <button
+            className={`filter-btn ${showInstalledOnly ? 'active' : ''}`}
+            onClick={() => setShowInstalledOnly(v => !v)}
+            style={{ color: showInstalledOnly ? 'var(--success)' : undefined }}
+          >
+            Installed
+          </button>
         </div>
-        <div className="flex items-center gap-2">
-          <div style={{ position: 'relative', width: 180 }}>
-            <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
-            <input
-              className="input"
-              placeholder="Search versions..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ paddingLeft: 30, paddingTop: 6, paddingBottom: 6, fontSize: 12 }}
-            />
+        {batchMode ? (
+          <div className="flex items-center gap-2">
+            <span className="text-sm" style={{ fontWeight: 600, color: 'var(--accent)' }}>{selectedVersions.size} selected</span>
+            <button className="btn btn-ghost btn-xs" onClick={toggleSelectAll}>
+              {selectedVersions.size === filteredVersions.length ? 'Deselect All' : 'Select All'}
+            </button>
+            <button className="btn btn-primary btn-xs" onClick={handleBatchInstall} disabled={selectedVersions.size === 0 || batchInstalling}>
+              {batchInstalling ? <Loader2 size={12} className="spinner" /> : null} Install Selected
+            </button>
+            <button className="btn btn-xs" onClick={handleBatchDelete} disabled={selectedVersions.size === 0} style={{ color: 'var(--error)', borderColor: 'var(--error-dim)', border: '1px solid var(--error-dim)', background: 'transparent', borderRadius: 4, padding: '4px 8px', cursor: 'pointer' }}>
+              <Trash2 size={12} /> Delete Selected
+            </button>
+            <button className="btn btn-ghost btn-xs" onClick={() => { setBatchMode(false); setSelectedVersions(new Set()) }}>
+              <X size={12} /> Exit
+            </button>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => { loadVersions(); setNewVersions([]) }}>
-            <RefreshCw size={14} />
-            Refresh
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleOpenGameFolder} title="Open game folder">
-            <FolderOpen size={14} />
-          </button>
-        </div>
+        ) : (
+          <div className="flex items-center gap-2" style={{ flex: '0 1 auto', minWidth: 0 }}>
+            <div style={{ position: 'relative', flex: '0 1 160px', minWidth: 0 }}>
+              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+              <input
+                className="input"
+                placeholder="Search versions..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{ paddingLeft: 30, paddingTop: 6, paddingBottom: 6, width: '100%' }}
+              />
+            </div>
+            <button className="btn btn-sm btn-ghost" style={{ flexShrink: 0 }} onClick={() => { setBatchMode(true); setSelectedVersions(new Set()) }}>
+              Batch
+            </button>
+            <button className="btn btn-ghost btn-sm" style={{ flexShrink: 0 }} onClick={async () => { await window.electronAPI.versions.refresh(); loadVersions(); setNewVersions([]) }}>
+              <RefreshCw size={14} />
+              Refresh
+            </button>
+            <button className="btn btn-ghost btn-sm" style={{ flexShrink: 0 }} onClick={handleOpenGameFolder} title="Open game folder">
+              <FolderOpen size={14} />
+            </button>
+          </div>
+        )}
       </div>
 
-      {newVersions.length > 0 && (
+      {newVersions.length > 0 && !batchMode && (
         <div className="card" style={{ marginBottom: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, borderLeft: '3px solid var(--accent)' }}>
           <span className="text-sm" style={{ flex: 1 }}>
             {newVersions.length} new version(s) available: {newVersions.join(', ')}
@@ -419,7 +588,10 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
           { label: 'Play', icon: <PlayIcon size={14} />, onClick: () => contextMenu && handlePlay(contextMenu.versionId), disabled: !contextMenu?.installed || !currentAccount },
           { label: contextMenu?.installed ? 'Reinstall' : 'Install', icon: <Download size={14} />, onClick: () => contextMenu && (contextMenu.installed ? setConfirmAction({ type: 'reinstall', id: contextMenu.versionId }) : handleInstall(contextMenu.versionId)) },
           { label: 'Memory', icon: <MemoryStick size={14} />, onClick: () => contextMenu && openMemoryModal(contextMenu.versionId) },
+          { label: 'OptiFine', icon: <Eye size={14} />, onClick: () => contextMenu && window.electronAPI.shell.openExternal('https://optifine.net/downloads') },
           { label: 'Details', icon: <Info size={14} />, onClick: () => contextMenu && handleShowDetails(contextMenu.versionId) },
+          { label: pinnedVersions.includes(contextMenu?.versionId || '') ? 'Unpin' : 'Pin to Top', icon: <Star size={14} />, onClick: () => contextMenu && togglePin(contextMenu.versionId) },
+          { label: 'Notes', icon: <FileText size={14} />, onClick: () => contextMenu && openNoteModal(contextMenu.versionId, instanceNotes[contextMenu.versionId] || '') },
           { label: 'Delete', icon: <Trash2 size={14} />, onClick: () => contextMenu && setConfirmAction({ type: 'delete', id: contextMenu.versionId }), danger: true, disabled: !contextMenu?.installed },
         ]}
       />
@@ -498,6 +670,27 @@ function Versions({ currentAccount, onLaunch }: VersionsProps) {
           </div>
         )}
       </Modal>
+
+      <Modal
+        open={noteVersionId !== null}
+        onClose={() => { setNoteVersionId(null); setNoteText('') }}
+        title={noteVersionId ? `Notes: ${noteVersionId}` : ''}
+        actions={
+          <div className="flex items-center gap-2" style={{ width: '100%', justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setNoteVersionId(null); setNoteText('') }}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveNote}><Save size={14} /> Save</button>
+          </div>
+        }>
+        <textarea
+          className="textarea"
+          value={noteText}
+          onChange={e => setNoteText(e.target.value)}
+          placeholder="Add personal notes about this version (e.g. requires Java 17, laggy with shaders)..."
+          rows={6}
+          style={{ width: '100%', resize: 'vertical' }}
+        />
+      </Modal>
+
       </>
       )}
     </div>

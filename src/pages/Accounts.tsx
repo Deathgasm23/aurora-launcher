@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { UserPlus, Trash2, Star, User, Clock, History } from 'lucide-react'
+import { useState, useEffect, Fragment } from 'react'
+import { UserPlus, Trash2, Star, User, Clock } from 'lucide-react'
 import type { MinecraftAccount, PlaytimeData } from '../../shared/types'
 import Notification from '../components/common/Notification'
 import EmptyState from '../components/common/EmptyState'
@@ -28,7 +28,6 @@ function Accounts({ onAccountsChanged }: AccountsProps) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [notif, setNotif] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [playtime, setPlaytime] = useState<PlaytimeData | null>(null)
-
   async function loadAccounts() {
     try {
       const [accs, current, pt] = await Promise.all([
@@ -113,19 +112,15 @@ function Accounts({ onAccountsChanged }: AccountsProps) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {accounts.map(acc => (
+            <Fragment key={acc.id}>
             <div
-              key={acc.id}
               className={`account-card ${acc.id === currentAccountId ? 'active' : ''}`}
               onClick={() => handleSetCurrent(acc.id)}
             >
               <div className="skin-avatar">
-                {acc.skinUrl ? (
-                  <img src={acc.skinUrl} alt={`${acc.username} skin`} />
-                ) : (
-                  <div className="skin-avatar-placeholder">
-                    {acc.username.charAt(0).toUpperCase()}
-                  </div>
-                )}
+                <div className="skin-avatar-placeholder">
+                  {acc.username.charAt(0).toUpperCase()}
+                </div>
               </div>
               <div className="account-info">
                 <div className="account-name">{acc.username}</div>
@@ -135,10 +130,16 @@ function Accounts({ onAccountsChanged }: AccountsProps) {
                 </div>
                 {playtime?.byAccount[acc.id] && (
                   <div className="account-playtime">
-                    <Clock size={11} />
+                    <Clock size={12} />
                     <span>{formatDuration(playtime.byAccount[acc.id].totalDuration)}</span>
-                    <span style={{ opacity: 0.5 }}>·</span>
-                    <span>{playtime.byAccount[acc.id].count} sessions</span>
+                    <span style={{ opacity: 0.4 }}>·</span>
+                    <span>{playtime.byAccount[acc.id].count} session{playtime.byAccount[acc.id].count !== 1 ? 's' : ''}</span>
+                    {playtime.byAccount[acc.id].lastPlayed > 0 && (
+                      <>
+                        <span style={{ opacity: 0.4 }}>·</span>
+                        <span>Last played {new Date(playtime.byAccount[acc.id].lastPlayed).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -147,7 +148,7 @@ function Accounts({ onAccountsChanged }: AccountsProps) {
               )}
               <div className="account-actions">
                 <button
-                  className="btn btn-ghost"
+                  className="btn btn-ghost btn-sm"
                   onClick={e => { e.stopPropagation(); setConfirmDelete(acc.id) }}
                   title="Remove account"
                 >
@@ -155,6 +156,7 @@ function Accounts({ onAccountsChanged }: AccountsProps) {
                 </button>
               </div>
             </div>
+            </Fragment>
           ))}
         </div>
       )}

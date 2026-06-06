@@ -63,8 +63,8 @@ function Logs() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: 0, overflow: 'hidden', height: 'calc(100vh - 180px)' }}>
-        <div className="console-output" style={{ height: '100%', border: 'none' }}>
+      <div className="card" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div className="console-output" style={{ flex: 1, maxHeight: 'none', border: 'none' }}>
           {logs.length === 0 ? (
             <span style={{ color: 'var(--text-muted)' }}>No log entries yet.</span>
           ) : (
